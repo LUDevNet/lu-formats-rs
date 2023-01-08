@@ -7,10 +7,9 @@ edition = "2021"
 
 [build-dependencies]
 serde_yaml = "0.9.16"
-serde = "1.0.152"
-quote = "1.0.23"
 kaitai-struct-types = { path = "./kaitai-struct-types" }
-heck = "0.4.0"
+kaitai-codegen-quote = { path = "./kaitai-codegen-quote" }
+quote = "1.0.23"
 
 [workspace]
 members = [".", "kaitai-struct-types"]
