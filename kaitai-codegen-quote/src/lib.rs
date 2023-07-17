@@ -24,6 +24,31 @@ pub struct Type {
     pub depends_on: BTreeSet<String>,
 }
 
+impl Type {
+    fn has_generics(&self) -> bool {
+        self.field_generics.values().all(|fg| !fg.external) && !self.needs_lifetime
+    }
+
+    fn token_stream(&self) -> TokenStream {
+        let ty_id = &self.ident;
+        if self.has_generics() {
+            quote!(#ty_id)
+        } else {
+            let lifetime = match self.needs_lifetime {
+                true => Some(quote!('a)),
+                false => None,
+            };
+            let f_gen = self
+                .field_generics
+                .values()
+                .filter(|fg| fg.external)
+                .map(FieldGenerics::variant_type); // FIXME: more intelligent?
+            let gen = lifetime.into_iter().chain(f_gen);
+            quote!(#ty_id<#(#gen),*>)
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FieldGenerics {
     /// The name of the generic field
@@ -36,6 +61,18 @@ pub struct FieldGenerics {
     /// (relative) names of the types this field generic may depend on
     depends_on: BTreeSet<String>,
     need_lifetime: bool,
+
+    external: bool,
+}
+
+impl FieldGenerics {
+    fn variant_type(&self) -> TokenStream {
+        let n: &Ident = &self.var_enum;
+        match self.need_lifetime {
+            true => quote!(#n<'a>),
+            false => quote!(#n),
+        }
+    }
 }
 
 pub struct Module {
@@ -197,18 +234,7 @@ fn codegen_type_ref(
         TypeRef::WellKnown(wktr) => quote_wk_typeref(*wktr),
         TypeRef::Named(n) => {
             if let Some(ty) = nc.resolve(n) {
-                let ty_id = &ty.ident;
-                let mut q_ty = if ty.field_generics.is_empty() && !ty.needs_lifetime {
-                    quote!(#ty_id)
-                } else {
-                    let lifetime = match ty.needs_lifetime {
-                        true => Some(quote!('a)),
-                        false => None,
-                    };
-                    let f_gen = ty.field_generics.values().map(|_v| quote!(()));
-                    let gen = lifetime.into_iter().chain(f_gen);
-                    quote!(#ty_id<#(#gen),*>)
-                };
+                let mut q_ty = ty.token_stream();
                 if let Some(src) = &ty.source_mod {
                     q_ty = quote!(#src::#q_ty);
                 }
@@ -225,8 +251,10 @@ fn codegen_type_ref(
                 let g = &gen.type_;
                 let t = &gen.trait_;
                 let v = &gen.var_enum;
-                tc.generics.push(quote!(#g: #t));
-                tc.generics_use.push(quote!(#g));
+                if gen.external {
+                    tc.generics.push(quote!(#g: #t));
+                    tc.generics_use.push(quote!(#g));
+                }
                 let trait_doc = format!("Marker trait for [`{enclosing_type}::{discriminant}`]");
                 let var_enum_doc =
                     format!("Raw variants for [`{}::{}`]", enclosing_type, discriminant);
@@ -288,7 +316,11 @@ fn codegen_type_ref(
 
                     #(#trait_impl_cases)*
                 });
-                quote!(#g)
+                if gen.external {
+                    quote!(#g)
+                } else {
+                    quote!(#v #var_enum_gen)
+                }
             } else {
                 quote!(())
             }
@@ -429,39 +461,36 @@ impl Context<'_> {
                 TypeRef::WellKnown(WellKnownTypeRef::Str | WellKnownTypeRef::StrZ) => {
                     needs_lifetime = true;
                 }
+                TypeRef::WellKnown(_) => {}
                 TypeRef::Named(n) => {
                     depends_on.insert(n.clone());
                 }
                 TypeRef::Dynamic { switch_on, cases } => {
                     if let AnyScalar::String(s) = switch_on {
-                        if s.starts_with("_parent.") {
-                            // TODO: improve heuristic
-                            let rust_generic_name = orig_attr_id.to_upper_camel_case();
-                            let g = format_ident!("{}", rust_generic_name);
-                            let t = format_ident!("{}{}", rust_struct_name, rust_generic_name);
-                            let var_enum = format_ident!("{}Variants", t);
-                            let mut depends_on = BTreeSet::new();
-                            for case in cases.values() {
-                                if let TypeRef::Named(n) = case {
-                                    depends_on.insert(n.clone());
-                                }
+                        let rust_generic_name = orig_attr_id.to_upper_camel_case();
+                        let g = format_ident!("{}", rust_generic_name);
+                        let t = format_ident!("I{}{}", rust_struct_name, rust_generic_name);
+                        let var_enum =
+                            format_ident!("{}{}Variants", rust_struct_name, rust_generic_name);
+                        let mut depends_on = BTreeSet::new();
+                        for case in cases.values() {
+                            if let TypeRef::Named(n) = case {
+                                depends_on.insert(n.clone());
                             }
-
-                            field_generics.insert(
-                                orig_attr_id.to_string(),
-                                FieldGenerics {
-                                    trait_: t,
-                                    type_: g,
-                                    var_enum,
-
-                                    depends_on,
-                                    need_lifetime: false,
-                                },
-                            );
                         }
+                        let fg = FieldGenerics {
+                            trait_: t,
+                            type_: g,
+                            var_enum,
+
+                            depends_on,
+                            need_lifetime: false,
+                            external: s.starts_with("_parent."),
+                        };
+
+                        field_generics.insert(orig_attr_id.to_string(), fg);
                     }
                 }
-                _ => {}
             }
         }
         Type {
