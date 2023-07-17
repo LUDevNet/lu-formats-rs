@@ -18,14 +18,24 @@ pub struct Type {
     pub source_mod: Option<Ident>,
     pub ident: Ident,
     pub needs_lifetime: bool,
-    pub field_generics: BTreeMap<String, Generics>,
+    /// This represents a set of generics that depend on
+    /// values in the parent.
+    pub field_generics: BTreeMap<String, FieldGenerics>,
     pub depends_on: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Generics {
+pub struct FieldGenerics {
+    /// The name of the generic field
     type_: Ident,
+    /// The trait associated with that field
     trait_: Ident,
+    /// Identifier for an enum that has all options
+    var_enum: Ident,
+
+    /// (relative) names of the types this field generic may depend on
+    depends_on: BTreeSet<String>,
+    need_lifetime: bool,
 }
 
 pub struct Module {
@@ -33,15 +43,6 @@ pub struct Module {
     pub import: TokenStream,
     pub out_path: PathBuf,
     pub types: BTreeMap<String, Type>,
-}
-
-/// Context for transpiling a module / schema file
-pub struct Context<'a> {
-    /// Identifier for the parent module, e.g. `quote!(crate)`
-    pub parent: TokenStream,
-    pub available_imports: &'a BTreeMap<String, Module>,
-    pub schema: &'a KsySchema,
-    pub out_dir: &'a Path,
 }
 
 fn quote_wk_typeref(wktr: WellKnownTypeRef) -> TokenStream {
@@ -62,39 +63,309 @@ fn quote_wk_typeref(wktr: WellKnownTypeRef) -> TokenStream {
     }
 }
 
+struct NamingContext {
+    types: BTreeMap<String, Type>,
+}
+
+impl NamingContext {
+    fn new() -> Self {
+        Self {
+            types: BTreeMap::new(),
+        }
+    }
+
+    fn add(&mut self, key: &str, ty: Type) {
+        self.types.insert(key.to_owned(), ty);
+    }
+
+    fn resolve(&self, key: &str) -> Option<&Type> {
+        self.types.get(key)
+    }
+
+    fn need_lifetime(&self, type_ref: &TypeRef) -> bool {
+        match type_ref {
+            TypeRef::WellKnown(WellKnownTypeRef::Str) => true,
+            TypeRef::WellKnown(WellKnownTypeRef::StrZ) => true,
+            TypeRef::WellKnown(_) => false,
+            TypeRef::Named(n) => self.resolve(n).is_some_and(|v| v.needs_lifetime),
+            TypeRef::Dynamic {
+                switch_on: _,
+                cases: _,
+            } => todo!(),
+        }
+    }
+
+    fn import_module(&mut self, module: &Module) {
+        for (s, ty) in &module.types {
+            // FIXME: on demand?
+            self.types.insert(
+                format!("{}::{}", module.id, s),
+                Type {
+                    source_mod: Some(module.id.clone()),
+                    ..ty.clone()
+                },
+            );
+        }
+    }
+
+    fn process_dependencies(&mut self) {
+        // By type name, collect all structs that depend on it
+        let mut dependencies: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (s, ty) in &self.types {
+            if ty.source_mod.is_none() {
+                for dep in &ty.depends_on {
+                    dependencies.entry(dep.clone()).or_default().push(s.clone());
+                }
+            }
+        }
+
+        let mut lifetime_set = BTreeSet::<String>::new();
+        let mut to_process: BTreeSet<String> = self
+            .types
+            .iter()
+            .filter_map(|(k, v)| {
+                if v.needs_lifetime {
+                    Some(k.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        while !to_process.is_empty() {
+            let mut new_to_process = BTreeSet::new();
+            for e in &to_process {
+                if let Some(deps) = dependencies.get(e) {
+                    for dep in deps {
+                        if !lifetime_set.contains(dep) && !to_process.contains(dep) {
+                            new_to_process.insert(dep.clone());
+                        }
+                    }
+                }
+            }
+            lifetime_set.append(&mut to_process);
+            to_process.append(&mut new_to_process);
+        }
+        for s in &lifetime_set {
+            let ty = self.types.get_mut(s).unwrap();
+            ty.needs_lifetime = true;
+        }
+
+        for ty in self.types.values_mut() {
+            for gen in &mut ty.field_generics.values_mut() {
+                gen.need_lifetime = gen.depends_on.iter().any(|f| lifetime_set.contains(f));
+            }
+        }
+    }
+}
+
+struct TyContext {
+    generics: Vec<TokenStream>,
+    generics_use: Vec<TokenStream>,
+    traits: Vec<TokenStream>,
+}
+
+impl TyContext {
+    fn new() -> Self {
+        Self {
+            generics: vec![],
+            generics_use: vec![],
+            traits: vec![],
+        }
+    }
+}
+
+/// Context for transpiling a module / schema file
+pub struct Context<'a> {
+    /// Identifier for the parent module, e.g. `quote!(crate)`
+    pub parent: TokenStream,
+    pub available_imports: &'a BTreeMap<String, Module>,
+    pub schema: &'a KsySchema,
+    pub out_dir: &'a Path,
+}
+
+fn codegen_type_ref(
+    ty: &TypeRef,
+    nc: &NamingContext,
+    tc: &mut TyContext,
+    // Name of the type this is used in
+    enclosing_type: &str,
+    // Field name or enum variant
+    discriminant: &str,
+    field_generics: Option<&FieldGenerics>,
+) -> TokenStream {
+    match ty {
+        TypeRef::WellKnown(wktr) => quote_wk_typeref(*wktr),
+        TypeRef::Named(n) => {
+            if let Some(ty) = nc.resolve(n) {
+                let ty_id = &ty.ident;
+                let mut q_ty = if ty.field_generics.is_empty() && !ty.needs_lifetime {
+                    quote!(#ty_id)
+                } else {
+                    let lifetime = match ty.needs_lifetime {
+                        true => Some(quote!('a)),
+                        false => None,
+                    };
+                    let f_gen = ty.field_generics.values().map(|_v| quote!(()));
+                    let gen = lifetime.into_iter().chain(f_gen);
+                    quote!(#ty_id<#(#gen),*>)
+                };
+                if let Some(src) = &ty.source_mod {
+                    q_ty = quote!(#src::#q_ty);
+                }
+                q_ty
+            } else {
+                quote!(())
+            }
+        }
+        TypeRef::Dynamic {
+            switch_on: _,
+            cases,
+        } => {
+            if let Some(gen) = field_generics {
+                let g = &gen.type_;
+                let t = &gen.trait_;
+                let v = &gen.var_enum;
+                tc.generics.push(quote!(#g: #t));
+                tc.generics_use.push(quote!(#g));
+                let trait_doc = format!("Marker trait for [`{enclosing_type}::{discriminant}`]");
+                let var_enum_doc =
+                    format!("Raw variants for [`{}::{}`]", enclosing_type, discriminant);
+                let mut enum_cases: Vec<TokenStream> =
+                    Vec::<TokenStream>::with_capacity(cases.len());
+                let mut trait_impl_cases = Vec::<TokenStream>::with_capacity(cases.len());
+                for (case_key, case_type) in cases.iter() {
+                    let mut _enum_set = BTreeSet::<String>::new();
+                    let name: String = match case_key {
+                        AnyScalar::Null => todo!(),
+                        AnyScalar::Bool(true) => "True".to_owned(),
+                        AnyScalar::Bool(false) => "False".to_owned(),
+                        AnyScalar::String(s) => if let Some((_enum, part)) = s.split_once("::") {
+                            _enum_set.insert(_enum.to_owned());
+                            part
+                        } else {
+                            s
+                        }
+                        .to_upper_camel_case(),
+                    };
+                    let n: Ident = format_ident!("{}", name);
+                    let inner =
+                        codegen_type_ref(case_type, nc, tc, &v.to_string(), &name, field_generics);
+                    enum_cases.push(quote! {
+                        #n(#inner),
+                    });
+                    let need_lifetime = nc.need_lifetime(case_type);
+                    let l = match need_lifetime {
+                        true => quote!(<'a>),
+                        false => quote!(),
+                    };
+
+                    trait_impl_cases.push(quote!(
+                        impl #l #t for #inner {}
+                    ));
+                }
+
+                // variant enum generics
+                let var_enum_gen = match gen.need_lifetime {
+                    false => quote!(),
+                    true => quote!(<'a>),
+                };
+
+                tc.traits.push(quote! {
+                    #[doc = #trait_doc]
+                    pub trait #t {
+                        // TODO
+                    }
+
+                    #[doc = #var_enum_doc]
+                    pub enum #v #var_enum_gen {
+                        #(#enum_cases)*
+                    }
+
+                    // FIXME: remove
+                    impl #t for () {}
+
+                    impl #var_enum_gen #t for #v #var_enum_gen {}
+
+                    #(#trait_impl_cases)*
+                });
+                quote!(#g)
+            } else {
+                quote!(())
+            }
+        }
+    }
+}
+
 impl Context<'_> {
+    fn codegen_attr(
+        &self,
+        nc: &NamingContext,
+        struct_name: &str,
+        attr: &Attribute,
+        self_ty: Option<&Type>,
+        tc: &mut TyContext,
+    ) -> io::Result<TokenStream> {
+        let orig_attr_id = attr.id.as_ref().unwrap().as_str();
+        let attr_id = match orig_attr_id {
+            "type" => quote!(r#type),
+            _ => format_ident!("{}", orig_attr_id).to_token_stream(),
+        };
+        let attr_doc = attr.doc.as_deref().unwrap_or("");
+        let attr_doc_ref = attr.doc_ref.as_ref();
+        let attr_doc_refs = attr_doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
+
+        let ty_doc = format!("Type: `{:?}`", attr.ty);
+        let if_doc = attr
+            .if_expr
+            .as_ref()
+            .map(|i| format!("If: `{}`", i))
+            .map(|s| {
+                quote!(
+                    #[doc = #s]
+                )
+            });
+        let repeat_doc = attr.repeat.as_ref().map(|r| {
+            let rep_doc = format!("Repeat: `{:?}`", r);
+            quote!(#[doc = #rep_doc])
+        });
+        let fg = self_ty.and_then(|ty| ty.field_generics.get(orig_attr_id));
+        let mut ty = codegen_type_ref(&attr.ty, nc, tc, struct_name, orig_attr_id, fg);
+        if let Some(_rep) = &attr.repeat {
+            ty = quote!(Vec<#ty>);
+        } else if let Some(_expr) = &attr.if_expr {
+            ty = quote!(Option<#ty>);
+        }
+
+        Ok(quote!(
+            #[doc = #attr_doc]
+            #(#[doc = #attr_doc_refs])*
+            #[doc = #ty_doc]
+            #if_doc
+            #repeat_doc
+            pub #attr_id: #ty
+        ))
+    }
+
     fn codegen_struct(
         &self,
-        types: &BTreeMap<String, Type>,
+        nc: &NamingContext,
         name: &str,
         doc: Option<&str>,
         doc_ref: Option<&StringOrArray>,
         seq: &[Attribute],
     ) -> io::Result<TokenStream> {
-        let self_ty = types.get(name);
+        let self_ty = nc.resolve(name);
         let rust_struct_name = name.to_upper_camel_case();
         let id = format_ident!("{}", rust_struct_name);
         let doc = doc.unwrap_or("");
         let doc_refs = doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
-
-        /*
-        let needs_lifetime = seq.iter().any(|a| {
-            matches!(
-                &a.ty,
-                TypeRef::WellKnown(WellKnownTypeRef::Str)
-                    | TypeRef::WellKnown(WellKnownTypeRef::StrZ)
-            )
-        });
-        */
         let needs_lifetime = self_ty.map(|t| t.needs_lifetime).unwrap_or(true);
 
-        let mut generics = vec![];
-        let mut generics_use = vec![];
-        let mut traits = vec![];
+        let mut tc = TyContext::new();
 
         if needs_lifetime {
-            generics.push(quote!('a));
-            generics_use.push(quote!('a));
+            tc.generics.push(quote!('a));
+            tc.generics_use.push(quote!('a));
         }
 
         let mut attrs = vec![];
@@ -103,101 +374,17 @@ impl Context<'_> {
             if attr.id.is_none() {
                 continue;
             }
-
-            let orig_attr_id = attr.id.as_ref().unwrap().as_str();
-            let attr_id = match orig_attr_id {
-                "type" => quote!(r#type),
-                _ => format_ident!("{}", orig_attr_id).to_token_stream(),
-            };
-            let attr_doc = attr.doc.as_deref().unwrap_or("");
-            let attr_doc_ref = attr.doc_ref.as_ref();
-            let attr_doc_refs = attr_doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
-
-            let ty_doc = format!("Type: `{:?}`", attr.ty);
-            let if_doc = attr
-                .if_expr
-                .as_ref()
-                .map(|i| format!("If: `{}`", i))
-                .map(|s| {
-                    quote!(
-                        #[doc = #s]
-                    )
-                });
-            let repeat_doc = attr.repeat.as_ref().map(|r| {
-                let rep_doc = format!("Repeat: `{:?}`", r);
-                quote!(#[doc = #rep_doc])
-            });
-            let mut ty = match &attr.ty {
-                TypeRef::WellKnown(wktr) => quote_wk_typeref(*wktr),
-                TypeRef::Named(n) => {
-                    if let Some(ty) = types.get(n) {
-                        let ty_id = &ty.ident;
-                        let mut q_ty = if ty.field_generics.is_empty() && !ty.needs_lifetime {
-                            quote!(#ty_id)
-                        } else {
-                            let lifetime = match ty.needs_lifetime {
-                                true => Some(quote!('a)),
-                                false => None,
-                            };
-                            let f_gen = ty.field_generics.values().map(|_v| quote!(()));
-                            let gen = lifetime.into_iter().chain(f_gen);
-                            quote!(#ty_id<#(#gen),*>)
-                        };
-                        if let Some(src) = &ty.source_mod {
-                            q_ty = quote!(#src::#q_ty);
-                        }
-                        q_ty
-                    } else {
-                        quote!(())
-                    }
-                }
-                TypeRef::Dynamic {
-                    switch_on: _,
-                    cases: _,
-                } => {
-                    if let Some(gen) = self_ty.and_then(|ty| ty.field_generics.get(orig_attr_id)) {
-                        let g = &gen.type_;
-                        let t = &gen.trait_;
-                        generics.push(quote!(#g: #t));
-                        generics_use.push(quote!(#g));
-                        traits.push(quote! {
-                            pub trait #t {
-                                // TODO
-                            }
-
-                            // FIXME: remove
-                            impl #t for () {}
-                        });
-                        quote!(#g)
-                    } else {
-                        quote!(())
-                    }
-                }
-            };
-            if let Some(_rep) = &attr.repeat {
-                ty = quote!(Vec<#ty>);
-            } else if let Some(_expr) = &attr.if_expr {
-                ty = quote!(Option<#ty>);
-            }
-
-            attrs.push(quote!(
-                #[doc = #attr_doc]
-                #(#[doc = #attr_doc_refs])*
-                #[doc = #ty_doc]
-                #if_doc
-                #repeat_doc
-                pub #attr_id: #ty
-            ));
+            attrs.push(self.codegen_attr(nc, &rust_struct_name, attr, self_ty, &mut tc)?);
         }
 
-        let gen = match generics.is_empty() {
-            true => None,
-            false => Some(quote!(<#(#generics),*>)),
+        let gen = match &tc.generics[..] {
+            [] => None,
+            generics => Some(quote!(<#(#generics),*>)),
         };
 
-        let gen_use = match generics_use.is_empty() {
-            true => None,
-            false => Some(quote!(<#(#generics_use),*>)),
+        let gen_use = match &tc.generics_use[..] {
+            [] => None,
+            generics_use => Some(quote!(<#(#generics_use),*>)),
         };
 
         let input_lifetime = match needs_lifetime {
@@ -206,11 +393,14 @@ impl Context<'_> {
         };
         let file_parser_name = format_ident!("parse_file");
         let parser_name = self_ty.map(|t| &t.parser_name).unwrap_or(&file_parser_name);
+        let generics = &tc.generics[..];
         let q_parser = quote!(
             pub fn #parser_name<#input_lifetime #(#generics),*> (_input: &'a [u8]) -> Result<(&'a [u8], #id #gen_use), ()> {
                 todo!()
             }
         );
+
+        let traits = &tc.traits[..];
 
         let q = quote! {
             #[doc = #doc]
@@ -242,21 +432,30 @@ impl Context<'_> {
                 TypeRef::Named(n) => {
                     depends_on.insert(n.clone());
                 }
-                TypeRef::Dynamic {
-                    switch_on,
-                    cases: _,
-                } => {
+                TypeRef::Dynamic { switch_on, cases } => {
                     if let AnyScalar::String(s) = switch_on {
                         if s.starts_with("_parent.") {
                             // TODO: improve heuristic
                             let rust_generic_name = orig_attr_id.to_upper_camel_case();
                             let g = format_ident!("{}", rust_generic_name);
                             let t = format_ident!("{}{}", rust_struct_name, rust_generic_name);
+                            let var_enum = format_ident!("{}Variants", t);
+                            let mut depends_on = BTreeSet::new();
+                            for case in cases.values() {
+                                if let TypeRef::Named(n) = case {
+                                    depends_on.insert(n.clone());
+                                }
+                            }
+
                             field_generics.insert(
                                 orig_attr_id.to_string(),
-                                Generics {
+                                FieldGenerics {
                                     trait_: t,
                                     type_: g,
+                                    var_enum,
+
+                                    depends_on,
+                                    need_lifetime: false,
                                 },
                             );
                         }
@@ -285,7 +484,7 @@ impl Context<'_> {
         let out_file = format!("{}.rs", &schema.meta.id);
         let out_path = out_dir.join(out_file);
 
-        let mut types = BTreeMap::new();
+        let mut nc = NamingContext::new();
         let mut structs = vec![];
 
         let mut q_imports = vec![];
@@ -293,69 +492,22 @@ impl Context<'_> {
             let module = self.available_imports.get(imp).expect("Missing import");
             let mod_id = &module.import;
             q_imports.push(quote!(use #mod_id;));
-
-            for (s, ty) in &module.types {
-                types.insert(
-                    format!("{}::{}", module.id, s),
-                    Type {
-                        source_mod: Some(module.id.clone()),
-                        ..ty.clone()
-                    },
-                );
-            }
+            nc.import_module(module);
         }
 
         // First stage analysis
         for (key, spec) in &schema.types {
             let st = self.struct_type(key, spec);
-            types.insert(key.clone(), st);
+            nc.add(key, st);
         }
 
-        // By type name, collect all structs that depend on it
-        let mut dependencies: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for (s, ty) in &types {
-            if ty.source_mod.is_none() {
-                for dep in &ty.depends_on {
-                    dependencies.entry(dep.clone()).or_default().push(s.clone());
-                }
-            }
-        }
-
-        let mut lifetime_set = BTreeSet::<String>::new();
-        let mut to_process: BTreeSet<String> = types
-            .iter()
-            .filter_map(|(k, v)| {
-                if v.needs_lifetime {
-                    Some(k.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        while !to_process.is_empty() {
-            let mut new_to_process = BTreeSet::new();
-            for e in &to_process {
-                if let Some(deps) = dependencies.get(e) {
-                    for dep in deps {
-                        if !lifetime_set.contains(dep) && !to_process.contains(dep) {
-                            new_to_process.insert(dep.clone());
-                        }
-                    }
-                }
-            }
-            lifetime_set.append(&mut to_process);
-            to_process.append(&mut new_to_process);
-        }
-        for s in lifetime_set {
-            let ty = types.get_mut(&s).unwrap();
-            ty.needs_lifetime = true;
-        }
+        nc.process_dependencies();
 
         // Struct Codegen
         for (key, spec) in &schema.types {
             let doc = spec.doc.as_deref();
             let doc_ref = spec.doc_ref.as_ref();
-            let st = self.codegen_struct(&types, key, doc, doc_ref, &spec.seq)?;
+            let st = self.codegen_struct(&nc, key, doc, doc_ref, &spec.seq)?;
             structs.push(st);
         }
 
@@ -389,7 +541,7 @@ impl Context<'_> {
             true => None,
             false => Some(
                 self.codegen_struct(
-                    &types,
+                    &nc,
                     "file",
                     schema.doc.as_deref(),
                     schema.doc_ref.as_ref(),
@@ -417,7 +569,7 @@ impl Context<'_> {
         Ok(Module {
             id: sid,
             out_path,
-            types,
+            types: nc.types,
             import,
         })
     }
