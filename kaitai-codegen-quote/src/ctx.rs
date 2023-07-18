@@ -6,6 +6,7 @@ use crate::{r#type::Type, Module};
 
 pub(super) struct NamingContext {
     types: BTreeMap<String, Type>,
+    root: Option<String>,
 }
 
 impl NamingContext {
@@ -16,6 +17,7 @@ impl NamingContext {
     pub fn new() -> Self {
         Self {
             types: BTreeMap::new(),
+            root: None,
         }
     }
 
@@ -23,8 +25,17 @@ impl NamingContext {
         self.types.insert(key.to_owned(), ty);
     }
 
+    pub fn set_root(&mut self, key: &str, ty: Type) {
+        self.root = Some(key.to_owned());
+        self.types.insert(key.to_owned(), ty);
+    }
+
     pub fn resolve(&self, key: &str) -> Option<&Type> {
         self.types.get(key)
+    }
+
+    pub fn get_root(&self) -> Option<&Type> {
+        self.resolve(self.root.as_ref()?)
     }
 
     pub fn need_lifetime(&self, type_ref: &TypeRef) -> bool {

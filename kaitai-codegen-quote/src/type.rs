@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use heck::ToUpperCamelCase;
-use kaitai_struct_types::{AnyScalar, Attribute, TypeRef, TypeSpec, WellKnownTypeRef};
+use kaitai_struct_types::{
+    AnyScalar, Attribute, IntTypeRef, KsySchema, TypeRef, TypeSpec, WellKnownTypeRef,
+};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
@@ -20,7 +22,7 @@ pub struct Type {
 }
 
 impl Type {
-    pub fn new(key: &str, spec: &TypeSpec) -> Self {
+    fn new_named(key: &str, seq: &[Attribute]) -> Self {
         let rust_struct_name = key.to_upper_camel_case();
         let mut t = Self {
             parser_name: format_ident!("parse_{}", key),
@@ -31,15 +33,23 @@ impl Type {
             depends_on: BTreeSet::new(),
             fields: Vec::new(),
         };
-        for a in &spec.seq {
+        for a in seq {
             t.push_seq_elem(a);
         }
         t
     }
 
+    pub fn new(key: &str, spec: &TypeSpec) -> Self {
+        Self::new_named(key, &spec.seq)
+    }
+
+    pub fn new_root(spec: &KsySchema) -> Self {
+        Self::new_named(&spec.meta.id.0, &spec.seq)
+    }
+
     fn push_seq_elem(&mut self, a: &Attribute) {
         let orig_attr_id = a.id.as_deref().unwrap();
-        self.fields.push(Field::new(orig_attr_id));
+        let mut f = Field::new(orig_attr_id);
 
         if let Some(ty) = &a.ty {
             match ty {
@@ -57,28 +67,45 @@ impl Type {
                         let t = format_ident!("I{}{}", self.ident, &g);
                         let var_enum = format_ident!("{}{}Variants", self.ident, &g);
                         let mut depends_on = BTreeSet::new();
+                        let mut unsigned: Option<IntTypeRef> = None;
+                        let mut all_unsigned = true;
                         for case in cases.values() {
                             if let TypeRef::Named(n) = case {
                                 depends_on.insert(n.clone());
                             }
+                            if let TypeRef::WellKnown(WellKnownTypeRef::Unsigned(u)) = case {
+                                unsigned = match unsigned {
+                                    Some(i) if u > &i => Some(*u),
+                                    Some(i) => Some(i),
+                                    None => Some(*u),
+                                };
+                            } else {
+                                all_unsigned = false;
+                            }
                         }
-                        let fg = FieldGenerics {
-                            trait_: t,
-                            type_: g,
-                            var_enum,
-
-                            depends_on,
-                            need_lifetime: false,
-                            external: s.starts_with("_parent."),
-                        };
-
-                        self.field_generics.insert(orig_attr_id.to_string(), fg);
+                        if all_unsigned {
+                            let width = unsigned.unwrap().bytes();
+                            f.resolved_type = ResolvedType::UInt { width }
+                        } else {
+                            let fg = FieldGenerics {
+                                trait_: t,
+                                type_: g,
+                                var_enum,
+    
+                                depends_on,
+                                need_lifetime: false,
+                                external: s.starts_with("_parent."),
+                            };
+    
+                            self.field_generics.insert(orig_attr_id.to_string(), fg);
+                        }
                     }
                 }
             }
         } else {
             // TODO
         }
+        self.fields.push(f);
     }
 
     fn has_generics(&self) -> bool {
@@ -106,9 +133,17 @@ impl Type {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedType {
+    Auto,
+    UInt { width: usize },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Field {
     ident: Ident,
     id: String,
+
+    resolved_type: ResolvedType,
 }
 
 impl Field {
@@ -120,9 +155,15 @@ impl Field {
         Self {
             ident,
             id: orig_attr_id.to_owned(),
+            resolved_type: ResolvedType::Auto,
         }
     }
 
+    /// ID for this field
+    pub fn resolved_ty(&self) -> &ResolvedType {
+        &self.resolved_type
+    }
+    
     /// ID for this field
     pub fn id(&self) -> &str {
         &self.id

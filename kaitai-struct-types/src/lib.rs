@@ -436,25 +436,38 @@ pub enum EndianSpec {
     Big,
 }
 
+/// Integer byte width specification
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum IntTypeRef {
+    /// 8 bit integer
+    Int1,
+    /// 16 bit integer
+    Int2(EndianSpec),
+    /// 32 bit integer
+    Int4(EndianSpec),
+    /// 64 bit integer
+    Int8(EndianSpec),
+}
+
+impl IntTypeRef {
+    /// Get the number of bytes for values of this type
+    pub fn bytes(&self) -> usize {
+        match self {
+            IntTypeRef::Int1 => 1,
+            IntTypeRef::Int2(_) => 2,
+            IntTypeRef::Int4(_) => 4,
+            IntTypeRef::Int8(_) => 8,
+        }
+    }
+}
+
 /// Well known [TypeRef]s
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum WellKnownTypeRef {
-    /// unsigned 8 bit integer
-    U1,
-    /// unsigned 16 bit integer
-    U2(EndianSpec),
-    /// unsigned 32 bit integer
-    U4(EndianSpec),
-    /// unsigned 64 bit integer
-    U8(EndianSpec),
-    /// signed 8 bit integer
-    S1,
-    /// signed 16 bit integer
-    S2(EndianSpec),
-    /// signed 32 bit integer
-    S4(EndianSpec),
-    /// signed 64 bit integer
-    S8(EndianSpec),
+    /// unsigned integer
+    Unsigned(IntTypeRef),
+    /// signed integer
+    Signed(IntTypeRef),
     /// 32 bit IEEE floating point number (single precision)
     F4(EndianSpec),
     /// 64 bit IEEE floating point number (double precision)
@@ -470,27 +483,27 @@ impl FromStr for WellKnownTypeRef {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(match s {
-            "u1" => Self::U1,
-            "u2" => Self::U2(EndianSpec::Implicit),
-            "u2le" => Self::U2(EndianSpec::Little),
-            "u2be" => Self::U2(EndianSpec::Big),
-            "u4" => Self::U4(EndianSpec::Implicit),
-            "u4le" => Self::U4(EndianSpec::Little),
-            "u4be" => Self::U4(EndianSpec::Big),
-            "u8" => Self::U8(EndianSpec::Implicit),
-            "u8le" => Self::U8(EndianSpec::Little),
-            "u8be" => Self::U8(EndianSpec::Big),
+            "u1" => Self::Unsigned(IntTypeRef::Int1),
+            "u2" => Self::Unsigned(IntTypeRef::Int2(EndianSpec::Implicit)),
+            "u2le" => Self::Unsigned(IntTypeRef::Int2(EndianSpec::Little)),
+            "u2be" => Self::Unsigned(IntTypeRef::Int2(EndianSpec::Big)),
+            "u4" => Self::Unsigned(IntTypeRef::Int4(EndianSpec::Implicit)),
+            "u4le" => Self::Unsigned(IntTypeRef::Int4(EndianSpec::Little)),
+            "u4be" => Self::Unsigned(IntTypeRef::Int4(EndianSpec::Big)),
+            "u8" => Self::Unsigned(IntTypeRef::Int8(EndianSpec::Implicit)),
+            "u8le" => Self::Unsigned(IntTypeRef::Int8(EndianSpec::Little)),
+            "u8be" => Self::Unsigned(IntTypeRef::Int8(EndianSpec::Big)),
 
-            "s1" => Self::S1,
-            "s2" => Self::S2(EndianSpec::Implicit),
-            "s2le" => Self::S2(EndianSpec::Little),
-            "s2be" => Self::S2(EndianSpec::Big),
-            "s4" => Self::S4(EndianSpec::Implicit),
-            "s4le" => Self::S4(EndianSpec::Little),
-            "s4be" => Self::S4(EndianSpec::Big),
-            "s8" => Self::S8(EndianSpec::Implicit),
-            "s8le" => Self::S8(EndianSpec::Little),
-            "s8be" => Self::S8(EndianSpec::Big),
+            "s1" => Self::Signed(IntTypeRef::Int1),
+            "s2" => Self::Signed(IntTypeRef::Int2(EndianSpec::Implicit)),
+            "s2le" => Self::Signed(IntTypeRef::Int2(EndianSpec::Little)),
+            "s2be" => Self::Signed(IntTypeRef::Int2(EndianSpec::Big)),
+            "s4" => Self::Signed(IntTypeRef::Int4(EndianSpec::Implicit)),
+            "s4le" => Self::Signed(IntTypeRef::Int4(EndianSpec::Little)),
+            "s4be" => Self::Signed(IntTypeRef::Int4(EndianSpec::Big)),
+            "s8" => Self::Signed(IntTypeRef::Int8(EndianSpec::Implicit)),
+            "s8le" => Self::Signed(IntTypeRef::Int8(EndianSpec::Little)),
+            "s8be" => Self::Signed(IntTypeRef::Int8(EndianSpec::Big)),
 
             "f4" => Self::F4(EndianSpec::Implicit),
             "f4le" => Self::F4(EndianSpec::Little),
