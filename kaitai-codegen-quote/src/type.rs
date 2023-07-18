@@ -15,6 +15,8 @@ pub struct Type {
     /// values in the parent.
     pub field_generics: BTreeMap<String, FieldGenerics>,
     pub depends_on: BTreeSet<String>,
+
+    pub fields: Vec<Field>,
 }
 
 impl Type {
@@ -27,6 +29,7 @@ impl Type {
             needs_lifetime: false,
             field_generics: BTreeMap::new(),
             depends_on: BTreeSet::new(),
+            fields: Vec::new(),
         };
         for a in &spec.seq {
             t.push_seq_elem(a);
@@ -36,6 +39,8 @@ impl Type {
 
     fn push_seq_elem(&mut self, a: &Attribute) {
         let orig_attr_id = a.id.as_deref().unwrap();
+        self.fields.push(Field::new(orig_attr_id));
+
         if let Some(ty) = &a.ty {
             match ty {
                 TypeRef::WellKnown(WellKnownTypeRef::Str | WellKnownTypeRef::StrZ) => {
@@ -100,7 +105,36 @@ impl Type {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct Field {
+    ident: Ident,
+    id: String,
+}
+
+impl Field {
+    pub(crate) fn new(orig_attr_id: &str) -> Self {
+        let ident = match orig_attr_id {
+            "type" => format_ident!("r#type"),
+            _ => format_ident!("{}", orig_attr_id),
+        };
+        Self {
+            ident,
+            id: orig_attr_id.to_owned(),
+        }
+    }
+
+    /// ID for this field
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Rust identifier for this field
+    pub fn ident(&self) -> &Ident {
+        &self.ident
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldGenerics {
     /// The name of the generic field
     pub(crate) type_: Ident,

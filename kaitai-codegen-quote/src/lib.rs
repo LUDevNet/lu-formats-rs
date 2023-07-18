@@ -8,11 +8,11 @@ use std::{
 use ctx::NamingContext;
 use heck::ToUpperCamelCase;
 use kaitai_struct_types::{
-    AnyScalar, Attribute, KsySchema, StringOrArray, TypeRef, WellKnownTypeRef,
+    AnyScalar, Attribute, Contents, EndianSpec, KsySchema, StringOrArray, TypeRef, WellKnownTypeRef,
 };
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use r#type::{FieldGenerics, Type};
+use r#type::{Field, FieldGenerics, Type};
 
 mod ctx;
 mod r#type;
@@ -153,6 +153,7 @@ fn codegen_type_ref(
                     }
 
                     #[doc = #var_enum_doc]
+                    #[derive(Debug, Clone, PartialEq)]
                     pub enum #v #var_enum_gen {
                         #(#enum_cases)*
                     }
@@ -176,6 +177,100 @@ fn codegen_type_ref(
     }
 }
 
+fn codegen_attr_parse(
+    field: &Field,
+    attr: &Attribute,
+    p_input: &Ident,
+    p_endian: &Ident,
+) -> TokenStream {
+    let f_ident = field.ident();
+    let mut parser = if let Some(ty) = &attr.ty {
+        //let ty_str = format!("{:?}", ty).replace('{', "{{").replace('}', "}}");
+        match ty {
+            TypeRef::WellKnown(w) => match w {
+                WellKnownTypeRef::U1 => quote!(::nom::number::complete::u8),
+                WellKnownTypeRef::U2(e) => match e {
+                    EndianSpec::Implicit => quote!(::nom::number::complete::u16(#p_endian)),
+                    EndianSpec::Little => quote!(::nom::number::complete::le_u16),
+                    EndianSpec::Big => quote!(::nom::number::complete::be_u16),
+                },
+                WellKnownTypeRef::U4(e) => match e {
+                    EndianSpec::Implicit => quote!(::nom::number::complete::u32(#p_endian)),
+                    EndianSpec::Little => quote!(::nom::number::complete::le_u32),
+                    EndianSpec::Big => quote!(::nom::number::complete::be_u32),
+                },
+                WellKnownTypeRef::U8(e) => match e {
+                    EndianSpec::Implicit => quote!(::nom::number::complete::u64(#p_endian)),
+                    EndianSpec::Little => quote!(::nom::number::complete::le_u64),
+                    EndianSpec::Big => quote!(::nom::number::complete::be_u64),
+                },
+                WellKnownTypeRef::S1 => quote!(::nom::number::complete::i8(#p_endian)),
+                WellKnownTypeRef::S2(e) => match e {
+                    EndianSpec::Implicit => quote!(::nom::number::complete::i16(#p_endian)),
+                    EndianSpec::Little => quote!(::nom::number::complete::le_i16),
+                    EndianSpec::Big => quote!(::nom::number::complete::be_i16),
+                },
+                WellKnownTypeRef::S4(e) => match e {
+                    EndianSpec::Implicit => quote!(::nom::number::complete::i32(#p_endian)),
+                    EndianSpec::Little => quote!(::nom::number::complete::le_i32),
+                    EndianSpec::Big => quote!(::nom::number::complete::be_i32),
+                },
+                WellKnownTypeRef::S8(e) => match e {
+                    EndianSpec::Implicit => quote!(::nom::number::complete::i64(#p_endian)),
+                    EndianSpec::Little => quote!(::nom::number::complete::le_i64),
+                    EndianSpec::Big => quote!(::nom::number::complete::be_i64),
+                },
+                WellKnownTypeRef::F4(e) => match e {
+                    EndianSpec::Implicit => quote!(::nom::number::complete::f32(#p_endian)),
+                    EndianSpec::Little => quote!(::nom::number::complete::le_f32),
+                    EndianSpec::Big => quote!(::nom::number::complete::be_f32),
+                },
+                WellKnownTypeRef::F8(e) => match e {
+                    EndianSpec::Implicit => quote!(::nom::number::complete::f64(#p_endian)),
+                    EndianSpec::Little => quote!(::nom::number::complete::le_f64),
+                    EndianSpec::Big => quote!(::nom::number::complete::be_f64),
+                },
+                WellKnownTypeRef::Str => quote!(::nom::bytes::complete::take_until(
+                    ::std::slice::from_ref(&0)
+                )), // FIXME?
+                WellKnownTypeRef::StrZ => quote!(::nom::bytes::complete::take_until(
+                    ::std::slice::from_ref(&0)
+                )),
+            },
+            TypeRef::Named(n) => {
+                if let Some((module, ty)) = n.split_once("::") {
+                    let m = format_ident!("{}", module);
+                    let p = format_ident!("parse_{}", ty);
+                    quote!(super::super::#m::#p)
+                } else {
+                    format_ident!("parse_{}", n).into_token_stream()
+                }
+            }
+            TypeRef::Dynamic {
+                switch_on: _,
+                cases: _,
+            } => {
+                quote!(::nom::number::complete::le_u32)
+            }
+        }
+    } else if let Some(contents) = &attr.contents {
+        let tag = match contents {
+            Contents::String(s) => quote!(#s),
+            Contents::Bytes(b) => quote!(&[#(#b),*]),
+        };
+        // FIXME: different value?
+        quote!(::nom::combinator::value((), ::nom::bytes::complete::tag(#tag)))
+    } else {
+        quote!(::nom::number::complete::le_u32)
+    };
+    if let Some(_r) = &attr.repeat {
+        parser = quote!(::nom::multi::count(#parser, 1));
+    } else if let Some(_e) = &attr.if_expr {
+        parser = quote!(::nom::combinator::cond(false, #parser));
+    }
+    quote!(let (#p_input, #f_ident) = #parser(#p_input)?;)
+}
+
 impl Context<'_> {
     fn codegen_attr(
         &self,
@@ -183,13 +278,11 @@ impl Context<'_> {
         struct_name: &str,
         attr: &Attribute,
         self_ty: Option<&Type>,
+        field: &Field,
         tc: &mut TyContext,
     ) -> io::Result<TokenStream> {
-        let orig_attr_id = attr.id.as_ref().unwrap().as_str();
-        let attr_id = match orig_attr_id {
-            "type" => quote!(r#type),
-            _ => format_ident!("{}", orig_attr_id).to_token_stream(),
-        };
+        let orig_attr_id = field.id();
+        let attr_id = field.ident();
         let attr_doc = attr.doc.as_deref().unwrap_or("");
         let attr_doc_ref = attr.doc_ref.as_ref();
         let attr_doc_refs = attr_doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
@@ -239,6 +332,7 @@ impl Context<'_> {
         doc: Option<&str>,
         doc_ref: Option<&StringOrArray>,
         seq: &[Attribute],
+        fields: &[Field],
     ) -> io::Result<TokenStream> {
         let self_ty = nc.resolve(name);
         let rust_struct_name = name.to_upper_camel_case();
@@ -255,12 +349,21 @@ impl Context<'_> {
         }
 
         let mut attrs = vec![];
+        let mut parser = vec![];
+        let mut constructor = vec![];
 
-        for attr in seq {
+        let p_input = format_ident!("_input");
+        let p_endian = format_ident!("_endian");
+
+        for (i, attr) in seq.iter().enumerate() {
             if attr.id.is_none() {
                 continue;
             }
-            attrs.push(self.codegen_attr(nc, &rust_struct_name, attr, self_ty, &mut tc)?);
+            let field = &fields[i];
+            let f_ident = field.ident();
+            constructor.push(quote!(#f_ident,));
+            attrs.push(self.codegen_attr(nc, &rust_struct_name, attr, self_ty, field, &mut tc)?);
+            parser.push(codegen_attr_parse(field, attr, &p_input, &p_endian));
         }
 
         let gen = match &tc.generics[..] {
@@ -281,8 +384,13 @@ impl Context<'_> {
         let parser_name = self_ty.map(|t| &t.parser_name).unwrap_or(&file_parser_name);
         let generics = &tc.generics[..];
         let q_parser = quote!(
-            pub fn #parser_name<#input_lifetime #(#generics),*> (_input: &'a [u8]) -> Result<(&'a [u8], #id #gen_use), ()> {
-                todo!()
+            #[cfg(feature = "nom")]
+            pub fn #parser_name<#input_lifetime #(#generics),*> (#p_input: &'a [u8]) -> ::nom::IResult<&'a [u8], #id #gen_use> {
+                let #p_endian = ::nom::number::Endianness::Little;
+                #(#parser)*
+                Ok((#p_input, #id {
+                    #(#constructor)*
+                }))
             }
         );
 
@@ -336,7 +444,8 @@ impl Context<'_> {
         for (key, spec) in &schema.types {
             let doc = spec.doc.as_deref();
             let doc_ref = spec.doc_ref.as_ref();
-            let st = self.codegen_struct(&nc, key, doc, doc_ref, &spec.seq)?;
+            let struct_ty = nc.resolve(key).unwrap();
+            let st = self.codegen_struct(&nc, key, doc, doc_ref, &spec.seq, &struct_ty.fields)?;
             structs.push(st);
         }
 
@@ -366,6 +475,12 @@ impl Context<'_> {
             )
         });
 
+        let file_fields = schema
+            .seq
+            .iter()
+            .map(|a| a.id.as_ref().unwrap().as_str())
+            .map(Field::new)
+            .collect::<Vec<_>>();
         let file_struct = match schema.seq.is_empty() {
             true => None,
             false => Some(
@@ -375,6 +490,7 @@ impl Context<'_> {
                     schema.doc.as_deref(),
                     schema.doc_ref.as_ref(),
                     &schema.seq,
+                    &file_fields,
                 )
                 .unwrap(),
             ),

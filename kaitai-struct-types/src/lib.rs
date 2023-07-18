@@ -181,6 +181,20 @@ pub struct Attribute {
     /// If [Repeat::Expr], the expression to repeat
     #[serde(default)]
     pub repeat_expr: Option<String>,
+
+    /// Fixed expected contents
+    #[serde(default)]
+    pub contents: Option<Contents>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+/// A string or an array
+pub enum Contents {
+    /// A String
+    String(String),
+    /// An array of strings
+    Bytes(Vec<u8>),
 }
 
 /// Kind of repetition
