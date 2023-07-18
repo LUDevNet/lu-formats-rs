@@ -59,9 +59,11 @@ fn main() {
     let lib_path = ctx.out_dir.join("lib.rs");
     let (common_path, common_id) = ctx.run("common", "common").unwrap();
     let (luz_path, luz_id) = ctx.run("files", "luz").unwrap();
+    let (pki_path, pki_id) = ctx.run("files", "pki").unwrap();
 
     let common_path = common_path.to_string_lossy();
     let luz_path = luz_path.to_string_lossy();
+    let pki_path = pki_path.to_string_lossy();
 
     let lib = quote!(
         #[path = #common_path]
@@ -71,6 +73,9 @@ fn main() {
         pub mod files {
             #[path = #luz_path]
             pub mod #luz_id;
+
+            #[path = #pki_path]
+            pub mod #pki_id;
         }
     );
 

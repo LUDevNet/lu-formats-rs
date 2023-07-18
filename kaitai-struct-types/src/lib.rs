@@ -164,7 +164,7 @@ pub struct Attribute {
 
     /// The type of this attribute
     #[serde(rename = "type")]
-    pub ty: TypeRef,
+    pub ty: Option<TypeRef>,
 
     /// The size of this attribute (if present, creates a substream)
     #[serde(default)]
@@ -290,6 +290,8 @@ pub enum AnyScalar {
     Bool(bool),
     /// string
     String(String),
+    /// integer
+    UInt(u64),
 }
 
 struct AnyScalarVisitor;
@@ -320,6 +322,13 @@ impl<'de> serde::de::Visitor<'de> for AnyScalarVisitor {
         E: serde::de::Error,
     {
         Ok(AnyScalar::Bool(v))
+    }
+
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(AnyScalar::UInt(v))
     }
 }
 

@@ -5,75 +5,17 @@ use std::{
     process::Command,
 };
 
+use ctx::NamingContext;
 use heck::ToUpperCamelCase;
 use kaitai_struct_types::{
-    AnyScalar, Attribute, KsySchema, StringOrArray, TypeRef, TypeSpec, WellKnownTypeRef,
+    AnyScalar, Attribute, KsySchema, StringOrArray, TypeRef, WellKnownTypeRef,
 };
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
+use r#type::{FieldGenerics, Type};
 
-#[derive(Debug, Clone)]
-pub struct Type {
-    pub parser_name: Ident,
-    pub source_mod: Option<Ident>,
-    pub ident: Ident,
-    pub needs_lifetime: bool,
-    /// This represents a set of generics that depend on
-    /// values in the parent.
-    pub field_generics: BTreeMap<String, FieldGenerics>,
-    pub depends_on: BTreeSet<String>,
-}
-
-impl Type {
-    fn has_generics(&self) -> bool {
-        self.field_generics.values().all(|fg| !fg.external) && !self.needs_lifetime
-    }
-
-    fn token_stream(&self) -> TokenStream {
-        let ty_id = &self.ident;
-        if self.has_generics() {
-            quote!(#ty_id)
-        } else {
-            let lifetime = match self.needs_lifetime {
-                true => Some(quote!('a)),
-                false => None,
-            };
-            let f_gen = self
-                .field_generics
-                .values()
-                .filter(|fg| fg.external)
-                .map(FieldGenerics::variant_type); // FIXME: more intelligent?
-            let gen = lifetime.into_iter().chain(f_gen);
-            quote!(#ty_id<#(#gen),*>)
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct FieldGenerics {
-    /// The name of the generic field
-    type_: Ident,
-    /// The trait associated with that field
-    trait_: Ident,
-    /// Identifier for an enum that has all options
-    var_enum: Ident,
-
-    /// (relative) names of the types this field generic may depend on
-    depends_on: BTreeSet<String>,
-    need_lifetime: bool,
-
-    external: bool,
-}
-
-impl FieldGenerics {
-    fn variant_type(&self) -> TokenStream {
-        let n: &Ident = &self.var_enum;
-        match self.need_lifetime {
-            true => quote!(#n<'a>),
-            false => quote!(#n),
-        }
-    }
-}
+mod ctx;
+mod r#type;
 
 pub struct Module {
     pub id: Ident,
@@ -97,101 +39,6 @@ fn quote_wk_typeref(wktr: WellKnownTypeRef) -> TokenStream {
         // Note: we always use u8, independent of encoding because alignment isn't guaranteed.
         WellKnownTypeRef::Str => quote!(&'a [u8]),
         WellKnownTypeRef::StrZ => quote!(&'a [u8]),
-    }
-}
-
-struct NamingContext {
-    types: BTreeMap<String, Type>,
-}
-
-impl NamingContext {
-    fn new() -> Self {
-        Self {
-            types: BTreeMap::new(),
-        }
-    }
-
-    fn add(&mut self, key: &str, ty: Type) {
-        self.types.insert(key.to_owned(), ty);
-    }
-
-    fn resolve(&self, key: &str) -> Option<&Type> {
-        self.types.get(key)
-    }
-
-    fn need_lifetime(&self, type_ref: &TypeRef) -> bool {
-        match type_ref {
-            TypeRef::WellKnown(WellKnownTypeRef::Str) => true,
-            TypeRef::WellKnown(WellKnownTypeRef::StrZ) => true,
-            TypeRef::WellKnown(_) => false,
-            TypeRef::Named(n) => self.resolve(n).is_some_and(|v| v.needs_lifetime),
-            TypeRef::Dynamic {
-                switch_on: _,
-                cases: _,
-            } => todo!(),
-        }
-    }
-
-    fn import_module(&mut self, module: &Module) {
-        for (s, ty) in &module.types {
-            // FIXME: on demand?
-            self.types.insert(
-                format!("{}::{}", module.id, s),
-                Type {
-                    source_mod: Some(module.id.clone()),
-                    ..ty.clone()
-                },
-            );
-        }
-    }
-
-    fn process_dependencies(&mut self) {
-        // By type name, collect all structs that depend on it
-        let mut dependencies: BTreeMap<String, Vec<String>> = BTreeMap::new();
-        for (s, ty) in &self.types {
-            if ty.source_mod.is_none() {
-                for dep in &ty.depends_on {
-                    dependencies.entry(dep.clone()).or_default().push(s.clone());
-                }
-            }
-        }
-
-        let mut lifetime_set = BTreeSet::<String>::new();
-        let mut to_process: BTreeSet<String> = self
-            .types
-            .iter()
-            .filter_map(|(k, v)| {
-                if v.needs_lifetime {
-                    Some(k.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-        while !to_process.is_empty() {
-            let mut new_to_process = BTreeSet::new();
-            for e in &to_process {
-                if let Some(deps) = dependencies.get(e) {
-                    for dep in deps {
-                        if !lifetime_set.contains(dep) && !to_process.contains(dep) {
-                            new_to_process.insert(dep.clone());
-                        }
-                    }
-                }
-            }
-            lifetime_set.append(&mut to_process);
-            to_process.append(&mut new_to_process);
-        }
-        for s in &lifetime_set {
-            let ty = self.types.get_mut(s).unwrap();
-            ty.needs_lifetime = true;
-        }
-
-        for ty in self.types.values_mut() {
-            for gen in &mut ty.field_generics.values_mut() {
-                gen.need_lifetime = gen.depends_on.iter().any(|f| lifetime_set.contains(f));
-            }
-        }
     }
 }
 
@@ -274,6 +121,7 @@ fn codegen_type_ref(
                             s
                         }
                         .to_upper_camel_case(),
+                        AnyScalar::UInt(i) => format!("N{}", i),
                     };
                     let n: Ident = format_ident!("{}", name);
                     let inner =
@@ -361,12 +209,18 @@ impl Context<'_> {
             quote!(#[doc = #rep_doc])
         });
         let fg = self_ty.and_then(|ty| ty.field_generics.get(orig_attr_id));
-        let mut ty = codegen_type_ref(&attr.ty, nc, tc, struct_name, orig_attr_id, fg);
-        if let Some(_rep) = &attr.repeat {
-            ty = quote!(Vec<#ty>);
-        } else if let Some(_expr) = &attr.if_expr {
-            ty = quote!(Option<#ty>);
-        }
+        let ty = if let Some(ty) = &attr.ty {
+            let ty = codegen_type_ref(ty, nc, tc, struct_name, orig_attr_id, fg);
+            if let Some(_rep) = &attr.repeat {
+                quote!(Vec<#ty>)
+            } else if let Some(_expr) = &attr.if_expr {
+                quote!(Option<#ty>)
+            } else {
+                ty
+            }
+        } else {
+            quote!(())
+        };
 
         Ok(quote!(
             #[doc = #attr_doc]
@@ -449,60 +303,6 @@ impl Context<'_> {
         Ok(q)
     }
 
-    #[allow(clippy::collapsible_match)]
-    fn struct_type(&self, key: &str, spec: &TypeSpec) -> Type {
-        let rust_struct_name = key.to_upper_camel_case();
-        let mut needs_lifetime = false;
-        let mut field_generics = BTreeMap::new();
-        let mut depends_on = BTreeSet::new();
-        for a in &spec.seq {
-            let orig_attr_id = a.id.as_deref().unwrap();
-            match &a.ty {
-                TypeRef::WellKnown(WellKnownTypeRef::Str | WellKnownTypeRef::StrZ) => {
-                    needs_lifetime = true;
-                }
-                TypeRef::WellKnown(_) => {}
-                TypeRef::Named(n) => {
-                    depends_on.insert(n.clone());
-                }
-                TypeRef::Dynamic { switch_on, cases } => {
-                    if let AnyScalar::String(s) = switch_on {
-                        let rust_generic_name = orig_attr_id.to_upper_camel_case();
-                        let g = format_ident!("{}", rust_generic_name);
-                        let t = format_ident!("I{}{}", rust_struct_name, rust_generic_name);
-                        let var_enum =
-                            format_ident!("{}{}Variants", rust_struct_name, rust_generic_name);
-                        let mut depends_on = BTreeSet::new();
-                        for case in cases.values() {
-                            if let TypeRef::Named(n) = case {
-                                depends_on.insert(n.clone());
-                            }
-                        }
-                        let fg = FieldGenerics {
-                            trait_: t,
-                            type_: g,
-                            var_enum,
-
-                            depends_on,
-                            need_lifetime: false,
-                            external: s.starts_with("_parent."),
-                        };
-
-                        field_generics.insert(orig_attr_id.to_string(), fg);
-                    }
-                }
-            }
-        }
-        Type {
-            parser_name: format_ident!("parse_{}", key),
-            source_mod: None,
-            ident: format_ident!("{}", rust_struct_name),
-            needs_lifetime,
-            field_generics,
-            depends_on,
-        }
-    }
-
     pub fn codegen(&self) -> Result<Module, io::Error> {
         let schema = &self.schema;
         let out_dir = &self.out_dir;
@@ -526,7 +326,7 @@ impl Context<'_> {
 
         // First stage analysis
         for (key, spec) in &schema.types {
-            let st = self.struct_type(key, spec);
+            let st = Type::new(key, spec);
             nc.add(key, st);
         }
 
@@ -598,7 +398,7 @@ impl Context<'_> {
         Ok(Module {
             id: sid,
             out_path,
-            types: nc.types,
+            types: nc.into_types(),
             import,
         })
     }
