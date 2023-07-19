@@ -6,16 +6,18 @@ use std::{
 };
 
 use ctx::NamingContext;
+use expr::{parse_expr, Expr, Op};
 use heck::ToUpperCamelCase;
 use kaitai_struct_types::{
     AnyScalar, Attribute, Contents, EndianSpec, IntTypeRef, KsySchema, StringOrArray, TypeRef,
     WellKnownTypeRef,
 };
-use proc_macro2::{Ident, TokenStream};
+use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use r#type::{Field, FieldGenerics, Type, ResolvedType};
+use r#type::{Field, FieldGenerics, ResolvedType, Type};
 
 mod ctx;
+mod expr;
 mod r#type;
 
 pub struct Module {
@@ -176,6 +178,42 @@ fn codegen_type_ref(
     }
 }
 
+fn codegen_expr(_expr: &Expr) -> TokenStream {
+    match _expr {
+        Expr::Input(i, fields) => match *i {
+            "_root" | "_parent" => quote!(0xDEAD_BEEF),
+            _ => {
+                let mut ts = format_ident!("{}", i).into_token_stream();
+                for field in fields {
+                    let f = format_ident!("{}", field);
+                    ts = quote!(#ts.#f);
+                }
+                ts
+            }
+        },
+        Expr::Number(u) => Literal::u64_unsuffixed(*u).into_token_stream(),
+        Expr::BinOp { op, args } => {
+            let lhs = codegen_expr(&args.0);
+            let rhs = codegen_expr(&args.1);
+            match op {
+                Op::Dot => quote!((#lhs).#rhs),
+                Op::GtEq => quote!((#lhs >= #rhs)),
+                Op::Gt => quote!((#lhs > #rhs)),
+                Op::LtEq => quote!((#lhs <= #rhs)),
+                Op::Lt => quote!((#lhs < #rhs)),
+                Op::Eq => quote!((#lhs == #rhs)),
+                Op::And => quote!((#lhs && #rhs)),
+                Op::Or => quote!((#lhs || #rhs)),
+            }
+        }
+    }
+}
+
+fn codegen_expr_str(expr: &str) -> TokenStream {
+    let parsed_expr = parse_expr(expr).expect(expr);
+    codegen_expr(&parsed_expr)
+}
+
 fn codegen_attr_parse(
     field: &Field,
     attr: &Attribute,
@@ -269,7 +307,8 @@ fn codegen_attr_parse(
     if let Some(_r) = &attr.repeat {
         parser = quote!(::nom::multi::count(#parser, 1));
     } else if let Some(_e) = &attr.if_expr {
-        parser = quote!(::nom::combinator::cond(false, #parser));
+        let expr = codegen_expr_str(_e);
+        parser = quote!(::nom::combinator::cond(#expr, #parser));
     }
     quote!(let (#p_input, #f_ident) = #parser(#p_input)?;)
 }
@@ -313,14 +352,12 @@ impl Context<'_> {
                     quote!(())
                 }
             }
-            ResolvedType::UInt { width } => {
-                match *width {
-                    1 => quote!(u8),
-                    2 => quote!(u16),
-                    4 => quote!(u32),
-                    8 => quote!(u64),
-                    _ => panic!("width not supported")
-                }
+            ResolvedType::UInt { width } => match *width {
+                1 => quote!(u8),
+                2 => quote!(u16),
+                4 => quote!(u32),
+                8 => quote!(u64),
+                _ => panic!("width not supported"),
             },
         };
         let ty = if let Some(_rep) = &attr.repeat {
@@ -400,6 +437,7 @@ impl Context<'_> {
         let generics = &tc.generics[..];
         let q_parser = quote!(
             #[cfg(feature = "nom")]
+            #[allow(unused_parens)]
             pub fn #parser_name<#input_lifetime #(#generics),*> (#p_input: &'a [u8]) -> ::nom::IResult<&'a [u8], #id #gen_use> {
                 let #p_endian = ::nom::number::Endianness::Little;
                 #(#parser)*

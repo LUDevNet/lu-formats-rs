@@ -91,12 +91,12 @@ impl Type {
                                 trait_: t,
                                 type_: g,
                                 var_enum,
-    
+
                                 depends_on,
                                 need_lifetime: false,
                                 external: s.starts_with("_parent."),
                             };
-    
+
                             self.field_generics.insert(orig_attr_id.to_string(), fg);
                         }
                     }
@@ -163,7 +163,7 @@ impl Field {
     pub fn resolved_ty(&self) -> &ResolvedType {
         &self.resolved_type
     }
-    
+
     /// ID for this field
     pub fn id(&self) -> &str {
         &self.id
