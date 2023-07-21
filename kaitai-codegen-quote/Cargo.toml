@@ -8,5 +8,6 @@ serde = "1.0.152"
 quote = "1.0.23"
 heck = "0.4.0"
 kaitai-struct-types = { path = "../kaitai-struct-types" }
+kaitai-expr = { path = "../kaitai-expr" }
 proc-macro2 = "1.0.49"
 unicode-ident = "1.0.11"

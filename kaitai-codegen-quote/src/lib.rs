@@ -6,7 +6,7 @@ use std::{
 };
 
 use ctx::NamingContext;
-use expr::{parse_expr, Expr, Op};
+use kaitai_expr::{parse_expr, Expr, Op};
 use heck::ToUpperCamelCase;
 use kaitai_struct_types::{
     AnyScalar, Attribute, Contents, EndianSpec, IntTypeRef, KsySchema, StringOrArray, TypeRef,
@@ -17,7 +17,6 @@ use quote::{format_ident, quote, ToTokens};
 use r#type::{Field, FieldGenerics, ResolvedType, Type};
 
 mod ctx;
-mod expr;
 mod r#type;
 
 pub struct Module {
@@ -204,6 +203,7 @@ fn codegen_expr(_expr: &Expr) -> TokenStream {
                 Op::Eq => quote!((#lhs == #rhs)),
                 Op::And => quote!((#lhs && #rhs)),
                 Op::Or => quote!((#lhs || #rhs)),
+                Op::LParen | Op::RParen => todo!(),
             }
         }
     }

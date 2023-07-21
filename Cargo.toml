@@ -17,4 +17,4 @@ kaitai-codegen-quote = { path = "./kaitai-codegen-quote" }
 quote = "1.0.23"
 
 [workspace]
-members = [".", "kaitai-struct-types"]
+members = [".", "kaitai-struct-types", "kaitai-codegen-quote", "kaitai-expr"]
