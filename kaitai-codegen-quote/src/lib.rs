@@ -180,7 +180,7 @@ fn codegen_type_ref(
 fn codegen_expr(_expr: &Expr) -> TokenStream {
     match _expr {
         Expr::Input(i, fields) => match *i {
-            "_root" | "_parent" => quote!(0xDEAD_BEEF),
+            "_parent" => quote!(0xDEAD_BEEF),
             _ => {
                 let mut ts = format_ident!("{}", i).into_token_stream();
                 for field in fields {
@@ -290,19 +290,18 @@ fn codegen_attr_parse(
                 if _named_ty.root_obligations.is_empty() {
                     path
                 } else {
-                    let values: Vec<_> = if self_ty.is_root {
-                        _named_ty
-                            .root_obligations
-                            .fields()
-                            .map(|f| format_ident!("{}", f).into_token_stream())
-                            .collect()
-                    } else {
-                        _named_ty
-                            .root_obligations
-                            .fields()
-                            .map(|_| quote!(0xDEAD_BEEF))
-                            .collect()
-                    };
+                    fn _root_field(i: Ident) -> TokenStream {
+                        quote!(_root.#i)
+                    }
+                    let values: Vec<_> = _named_ty
+                        .root_obligations
+                        .fields()
+                        .map(|f| format_ident!("{}", f))
+                        .map(match self_ty.is_root {
+                            true => Ident::into_token_stream,
+                            false => _root_field,
+                        })
+                        .collect();
                     quote!(#path(#(#values),*))
                 }
             }
@@ -414,7 +413,9 @@ impl Context<'_> {
         let doc_parent_obligations =
             format!("```ron\n_parent: {:#?}\n```", self_ty.parent_obligations);
         let doc_parents = format!("```txt\nparents: {:?}\n```", self_ty.parents);
+        let doc_maybe_parents = format!("```txt\nmaybe_parents: {:?}\n```", self_ty.maybe_parents);
         let doc_depends_on = format!("```txt\ndepends_on: {:?}\n```", self_ty.depends_on);
+        let doc_may_depend_on = format!("```txt\nmay_depend_on: {:?}\n```", self_ty.may_depend_on);
         let doc_refs = doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
         let needs_lifetime = self_ty.needs_lifetime;
 
@@ -531,7 +532,9 @@ impl Context<'_> {
             #[doc = #doc_root_obligations]
             #[doc = #doc_parent_obligations]
             #[doc = #doc_parents]
+            #[doc = #doc_maybe_parents]
             #[doc = #doc_depends_on]
+            #[doc = #doc_may_depend_on]
             #[derive(Debug, Clone, PartialEq)]
             pub struct #id #gen {
                 #(#attrs),*

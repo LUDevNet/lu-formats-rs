@@ -23,9 +23,12 @@ pub struct Type {
     /// values in the parent.
     pub field_generics: BTreeMap<String, FieldGenerics>,
     pub depends_on: BTreeSet<String>,
+    pub may_depend_on: BTreeSet<String>,
 
     pub fields: Vec<Field>,
     pub parents: Vec<String>,
+    /// Structs that use this one, via field generics
+    pub maybe_parents: Vec<String>,
 
     pub root_obligations: ObligationTree,
     pub parent_obligations: ObligationTree,
@@ -43,6 +46,12 @@ impl fmt::Debug for ObligationTree {
 impl ObligationTree {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn union(&mut self, other: &ObligationTree) {
+        for (key, value) in &other.0 {
+            self.0.entry(key.clone()).or_default().union(value);
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -70,10 +79,13 @@ impl Type {
             ident: format_ident!("{}", rust_struct_name),
             needs_lifetime: false,
             field_generics: BTreeMap::new(),
+
             depends_on: BTreeSet::new(),
+            may_depend_on: BTreeSet::new(),
 
             fields: Vec::new(),
             parents: Vec::new(),
+            maybe_parents: Vec::new(),
 
             root_obligations: ObligationTree::new(),
             parent_obligations: ObligationTree::new(),
@@ -128,12 +140,13 @@ impl Type {
                         let g = format_ident!("{}", rust_generic_name);
                         let t = format_ident!("I{}{}", self.ident, &g);
                         let var_enum = format_ident!("{}{}Variants", self.ident, &g);
-                        let mut depends_on = BTreeSet::new();
+                        let mut fg_depends_on = BTreeSet::new();
                         let mut unsigned: Option<IntTypeRef> = None;
                         let mut all_unsigned = true;
                         for case in cases.values() {
                             if let TypeRef::Named(n) = case {
-                                depends_on.insert(n.clone());
+                                self.may_depend_on.insert(n.clone());
+                                fg_depends_on.insert(n.clone());
                             }
                             if let TypeRef::WellKnown(WellKnownTypeRef::Unsigned(u)) = case {
                                 unsigned = match unsigned {
@@ -154,7 +167,7 @@ impl Type {
                                 type_: g,
                                 var_enum,
 
-                                depends_on,
+                                depends_on: fg_depends_on,
                                 need_lifetime: false,
                                 external: s.starts_with("_parent."),
                             };

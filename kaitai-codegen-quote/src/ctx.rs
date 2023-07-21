@@ -2,7 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use kaitai_struct_types::{TypeRef, WellKnownTypeRef};
 
-use crate::{r#type::Type, Module};
+use crate::{
+    r#type::{ObligationTree, Type},
+    Module,
+};
 
 pub(super) struct NamingContext {
     types: BTreeMap<String, Type>,
@@ -64,13 +67,63 @@ impl NamingContext {
         }
     }
 
+    fn merge_root_obligations<'a>(
+        &'a self,
+        id: &'a str,
+        t: &'a Type,
+        in_stack: &mut BTreeSet<&'a str>,
+        results: &mut BTreeMap<String, ObligationTree>,
+    ) -> ObligationTree {
+        let mut o = t.root_obligations.clone();
+        for list in [&t.depends_on, &t.may_depend_on] {
+            for dep in list {
+                let t = self.resolve(dep).expect(dep);
+                if t.source_mod.is_none() && !in_stack.contains(dep.as_str()) {
+                    in_stack.insert(dep.as_str());
+                    o.union(&self.merge_root_obligations(dep, t, in_stack, results));
+                    in_stack.remove(dep.as_str());
+                }
+            }
+        }
+        results.entry(id.to_owned()).or_default().union(&o);
+        o
+    }
+
+    /// Ensures that root obligations (parser paramters)
+    /// are attached to all parents.
+    fn propagate_root_obligations(&mut self) {
+        let root_id = self.root.as_ref().unwrap().as_str();
+        let root = self.get_root().unwrap();
+        let mut in_stack = BTreeSet::new();
+        let mut results = BTreeMap::new();
+        let _ = self.merge_root_obligations(root_id, root, &mut in_stack, &mut results);
+
+        // After analysis, overwrite all the types
+        for (name, res) in results {
+            if let Some(t) = self.types.get_mut(&name) {
+                if t.source_mod.is_none() {
+                    t.root_obligations = res;
+                }
+            }
+        }
+    }
+
     pub fn process_dependencies(&mut self) {
+        self.propagate_root_obligations();
         // By type name, collect all structs that depend on it
         let mut dependencies: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        // By type name, dependencies via Field Generics
+        let mut maybe_dependencies: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (s, ty) in &self.types {
             if ty.source_mod.is_none() {
                 for dep in &ty.depends_on {
                     dependencies.entry(dep.clone()).or_default().push(s.clone());
+                }
+                for dep in &ty.may_depend_on {
+                    maybe_dependencies
+                        .entry(dep.clone())
+                        .or_default()
+                        .push(s.clone());
                 }
             }
         }
@@ -116,6 +169,13 @@ impl NamingContext {
         for (name, parents) in dependencies {
             if let Some(ty) = self.types.get_mut(&name) {
                 ty.parents = parents;
+            }
+        }
+
+        // ... and parents via field generics
+        for (name, maybe_parents) in maybe_dependencies {
+            if let Some(ty) = self.types.get_mut(&name) {
+                ty.maybe_parents = maybe_parents;
             }
         }
     }
