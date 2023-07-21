@@ -180,7 +180,7 @@ fn codegen_type_ref(
 fn codegen_expr(_expr: &Expr) -> TokenStream {
     match _expr {
         Expr::Input(i, fields) => match *i {
-            "_parent" => quote!(0xDEAD_BEEF),
+            "_parent" => quote!(0xBEEF),
             _ => {
                 let mut ts = format_ident!("{}", i).into_token_stream();
                 for field in fields {
@@ -287,13 +287,15 @@ fn codegen_attr_parse(
                 } else {
                     quote!(#p)
                 };
-                if _named_ty.root_obligations.is_empty() {
+                if _named_ty.root_obligations.is_empty()
+                    && !_named_ty.field_generics.values().any(|f| f.external)
+                {
                     path
                 } else {
                     fn _root_field(i: Ident) -> TokenStream {
                         quote!(_root.#i)
                     }
-                    let values: Vec<_> = _named_ty
+                    let mut values: Vec<_> = _named_ty
                         .root_obligations
                         .fields()
                         .map(|f| format_ident!("{}", f))
@@ -302,15 +304,36 @@ fn codegen_attr_parse(
                             false => _root_field,
                         })
                         .collect();
+                    for generics in _named_ty.field_generics.values() {
+                        if generics.external {
+                            values.push(quote!(|_| todo!()))
+                        }
+                    }
                     quote!(#path(#(#values),*))
                 }
             }
             TypeRef::Dynamic {
                 switch_on: _,
                 cases: _,
-            } => {
-                quote!(::nom::number::complete::le_u32)
-            }
+            } => match field.resolved_ty() {
+                ResolvedType::Auto => {
+                    let id = attr.id.as_deref().unwrap();
+                    let fg = self_ty.field_generics.get(id).expect(id);
+                    if fg.external {
+                        fg.parser.to_token_stream()
+                    } else {
+                        let t = &fg.var_enum;
+                        quote!((|i: &'a[u8]| -> ::nom::IResult<&'a[u8], #t> { todo!() }))
+                    }
+                }
+                ResolvedType::UInt { width } => match width {
+                    1 => quote!(::nom::number::complete::le_u8),
+                    2 => quote!(::nom::number::complete::le_u16),
+                    4 => quote!(::nom::number::complete::le_u32),
+                    8 => quote!(::nom::number::complete::le_u64),
+                    _ => todo!(),
+                },
+            },
         }
     } else if let Some(contents) = &attr.contents {
         let tag = match contents {
@@ -500,6 +523,18 @@ impl Context<'_> {
             None
         };
 
+        let _input_ty = quote!(&'a [u8]);
+        let _external_field_generics: Vec<_> = self_ty
+            .field_generics
+            .iter()
+            .filter(|f| f.1.external)
+            .map(|(_field, generics)| {
+                let p = &generics.parser;
+                let t = &generics.type_;
+                quote!(#p: impl Fn(&'a [u8]) -> ::nom::IResult<#_input_ty, #t>,)
+            })
+            .collect();
+
         let parser_name = &self_ty.parser_name;
         let generics = &tc.generics[..];
         let q_parser_impl = quote!(
@@ -513,15 +548,16 @@ impl Context<'_> {
             #[cfg(feature = "nom")]
             #[allow(unused_parens)]
         );
-        let q_result = quote!(::nom::IResult<&'a [u8], #id #gen_use>);
-        let q_parser = if _root.is_some() {
+        let q_result = quote!(::nom::IResult<#_input_ty, #id #gen_use>);
+        let q_parser = if _root.is_some() || !_external_field_generics.is_empty() {
             quote!(
                 #q_parser_attr
                 pub fn #parser_name<#input_lifetime #(#generics),*> (
                     #(#root_fields)*
-                ) -> impl FnMut(&'a [u8]) -> #q_result {
+                    #(#_external_field_generics)*
+                ) -> impl FnMut(#_input_ty) -> #q_result {
                     #_root
-                    move |#p_input: &'a [u8]| {
+                    move |#p_input: #_input_ty| {
                         #q_parser_impl
                     }
                 }

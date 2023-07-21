@@ -166,6 +166,7 @@ impl Type {
                                 trait_: t,
                                 type_: g,
                                 var_enum,
+                                parser: format_ident!("parse_{}", orig_attr_id),
 
                                 depends_on: fg_depends_on,
                                 need_lifetime: false,
@@ -256,6 +257,7 @@ pub struct FieldGenerics {
     pub(crate) type_: Ident,
     /// The trait associated with that field
     pub(crate) trait_: Ident,
+    pub(crate) parser: Ident,
     /// Identifier for an enum that has all options
     pub(crate) var_enum: Ident,
 
