@@ -12,16 +12,6 @@ pub enum Expr<'a> {
     },
 }
 
-impl<'a> Expr<'a> {
-    fn try_from_token(token: Token<'a>) -> Result<Expr<'a>, Error> {
-        match token {
-            Token::Ident(i) => Ok(Expr::Input(i, vec![])),
-            Token::Number(n) => Ok(Expr::Number(n)),
-            _ => Err(Error::NoValueStart),
-        }
-    }
-}
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Op {
     Dot,
@@ -109,58 +99,10 @@ impl<'a> ExprVM<'a> {
             }
         }
     }
-}
 
-/// Invariant: Always one more expr than op
-struct ExprBuilder<'a> {
-    expr_stack: Vec<Expr<'a>>,
-    op_stack: Vec<Op>,
-}
-
-impl<'a> ExprBuilder<'a> {
-    fn new(expr: Expr<'a>) -> Self {
-        Self {
-            op_stack: vec![],
-            expr_stack: vec![expr],
-        }
-    }
-
-    fn can_merge(&mut self, new_op: Op) -> bool {
-        self.op_stack.last().is_some_and(|&op| op < new_op)
-    }
-
-    fn push(&mut self, op: Op, expr: Expr<'a>) {
-        if op == Op::Dot {
-            let top = self.expr_stack.last_mut().unwrap();
-            if let Expr::Input(field, _) = expr {
-                if let Expr::Input(_, fields) = top {
-                    fields.push(field);
-                    return;
-                }
-            }
-        }
-        while self.can_merge(op) {
-            self.merge_last();
-        }
-        self.op_stack.push(op);
-        self.expr_stack.push(expr);
-    }
-
-    fn finish(&mut self) -> Expr<'a> {
-        while !self.op_stack.is_empty() {
-            self.merge_last();
-        }
-        self.expr_stack.pop().unwrap()
-    }
-
-    fn merge_last(&mut self) {
-        let op = self.op_stack.pop().unwrap();
-        let rhs = self.expr_stack.pop().unwrap();
-        let lhs = self.expr_stack.pop().unwrap();
-        self.expr_stack.push(Expr::BinOp {
-            op,
-            args: Box::new((lhs, rhs)),
-        });
+    pub fn result(&mut self) -> Expr<'a> {
+        assert_eq!(self.stack.len(), 1);
+        self.stack.pop().unwrap()
     }
 }
 
@@ -216,24 +158,13 @@ impl<'a> Lexer<'a> {
         Self { rest }
     }
 
-    pub fn parse_expr(mut self) -> Result<Expr<'a>, Error> {
-        let next_token = self.next().ok_or(Error::NoTokens)?;
-        let expr = Expr::try_from_token(next_token)?;
-        let mut stack = ExprBuilder::new(expr);
-
-        Ok(loop {
-            if let Some(t1) = self.next() {
-                if let Token::BinOp(new_op) = t1 {
-                    let t2 = self.next().ok_or(Error::NoValueStart)?;
-                    let expr = Expr::try_from_token(t2)?;
-                    stack.push(new_op, expr);
-                } else {
-                    return Err(Error::ValAfterExpr);
-                }
-            } else {
-                break stack.finish();
-            }
-        })
+    pub fn parse_expr(self) -> Result<Expr<'a>, Error> {
+        let yard = ShuntingYard::from(self);
+        let mut vm = ExprVM::new();
+        for token in yard {
+            vm.exec(token);
+        }
+        Ok(vm.result())
     }
 }
 
