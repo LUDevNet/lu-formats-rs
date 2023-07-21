@@ -28,13 +28,16 @@ impl RunContext {
         } else {
             quote!(crate::#dir_id)
         };
+        let out_dir = self.out_dir.join(dir);
+        std::fs::create_dir_all(&out_dir)?;
         let context = Context {
             parent,
             available_imports: &self.available_imports,
             schema: &schema,
-            out_dir: &self.out_dir,
+            out_dir: &out_dir,
         };
-        let module = context.codegen().unwrap();
+        let file_id = if dir == file { Some("mod") } else { None };
+        let module = context.codegen(file_id).unwrap();
         let mod_path = module.out_path.clone();
         let ident = format_ident!("{}", file);
         self.available_imports
@@ -57,26 +60,23 @@ fn main() {
         available_imports: BTreeMap::new(),
     };
     let lib_path = ctx.out_dir.join("lib.rs");
-    let (common_path, common_id) = ctx.run("common", "common").unwrap();
-    let (luz_path, luz_id) = ctx.run("files", "luz").unwrap();
-    let (pki_path, pki_id) = ctx.run("files", "pki").unwrap();
+    let (_common_path, common_id) = ctx.run("common", "common").unwrap();
+    let files_mod_path = ctx.out_dir.join("files").join("mod.rs");
+    let (_luz_path, luz_id) = ctx.run("files", "luz").unwrap();
+    let (_pki_path, pki_id) = ctx.run("files", "pki").unwrap();
 
-    let common_path = common_path.to_string_lossy();
-    let luz_path = luz_path.to_string_lossy();
-    let pki_path = pki_path.to_string_lossy();
+    let files_mod = quote!(
+        pub mod #luz_id;
+        pub mod #pki_id;
+    );
+    let mut files_mod_file = File::create(files_mod_path).unwrap();
+    write!(files_mod_file, "{}", files_mod).unwrap();
 
     let lib = quote!(
-        #[path = #common_path]
         pub mod #common_id;
 
         #[doc = "# File Formats"]
-        pub mod files {
-            #[path = #luz_path]
-            pub mod #luz_id;
-
-            #[path = #pki_path]
-            pub mod #pki_id;
-        }
+        pub mod files;
     );
 
     let mut out_file = File::create(lib_path).unwrap();

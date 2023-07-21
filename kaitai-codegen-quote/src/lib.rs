@@ -595,7 +595,7 @@ impl Context<'_> {
         Ok(q)
     }
 
-    pub fn codegen(&self) -> Result<Module, io::Error> {
+    pub fn codegen(&self, file_id: Option<&str>) -> Result<Module, io::Error> {
         let schema = &self.schema;
         let out_dir = &self.out_dir;
         let p = &self.parent;
@@ -603,7 +603,7 @@ impl Context<'_> {
         let sid = format_ident!("{}", id);
         let import = quote!(#p::#sid);
 
-        let out_file = format!("{}.rs", &schema.meta.id);
+        let out_file = format!("{}.rs", file_id.unwrap_or(&schema.meta.id.0));
         let out_path = out_dir.join(out_file);
 
         let mut nc = NamingContext::new();
