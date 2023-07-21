@@ -6,8 +6,8 @@ use std::{
 };
 
 use ctx::NamingContext;
-use kaitai_expr::{parse_expr, Expr, Op};
 use heck::ToUpperCamelCase;
+use kaitai_expr::{parse_expr, Expr, Op};
 use kaitai_struct_types::{
     AnyScalar, Attribute, Contents, EndianSpec, IntTypeRef, KsySchema, StringOrArray, TypeRef,
     WellKnownTypeRef,
@@ -216,13 +216,14 @@ fn codegen_expr_str(expr: &str) -> TokenStream {
 
 fn codegen_attr_parse(
     field: &Field,
+    self_ty: &Type,
     attr: &Attribute,
     p_input: &Ident,
     p_endian: &Ident,
+    nc: &NamingContext,
 ) -> TokenStream {
     let f_ident = field.ident();
     let mut parser = if let Some(ty) = &attr.ty {
-        //let ty_str = format!("{:?}", ty).replace('{', "{{").replace('}', "}}");
         match ty {
             TypeRef::WellKnown(w) => match w {
                 WellKnownTypeRef::Unsigned(u) => match u {
@@ -279,12 +280,30 @@ fn codegen_attr_parse(
                 )),
             },
             TypeRef::Named(n) => {
-                if let Some((module, ty)) = n.split_once("::") {
-                    let m = format_ident!("{}", module);
-                    let p = format_ident!("parse_{}", ty);
-                    quote!(super::super::#m::#p)
+                let _named_ty = nc.resolve(n).unwrap();
+                let p = &_named_ty.parser_name;
+                let path = if let Some(m) = &_named_ty.source_mod {
+                    quote!(#m::#p)
                 } else {
-                    format_ident!("parse_{}", n).into_token_stream()
+                    quote!(#p)
+                };
+                if _named_ty.root_obligations.is_empty() {
+                    path
+                } else {
+                    let values: Vec<_> = if self_ty.is_root {
+                        _named_ty
+                            .root_obligations
+                            .fields()
+                            .map(|f| format_ident!("{}", f).into_token_stream())
+                            .collect()
+                    } else {
+                        _named_ty
+                            .root_obligations
+                            .fields()
+                            .map(|_| quote!(0xDEAD_BEEF))
+                            .collect()
+                    };
+                    quote!(#path(#(#values),*))
                 }
             }
             TypeRef::Dynamic {
@@ -391,6 +410,11 @@ impl Context<'_> {
         let rust_struct_name = name.to_upper_camel_case();
         let id = format_ident!("{}", rust_struct_name);
         let doc = doc.unwrap_or("");
+        let doc_root_obligations = format!("```ron\n_root: {:#?}\n```", self_ty.root_obligations);
+        let doc_parent_obligations =
+            format!("```ron\n_parent: {:#?}\n```", self_ty.parent_obligations);
+        let doc_parents = format!("```txt\nparents: {:?}\n```", self_ty.parents);
+        let doc_depends_on = format!("```txt\ndepends_on: {:?}\n```", self_ty.depends_on);
         let doc_refs = doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
         let needs_lifetime = self_ty.needs_lifetime;
 
@@ -416,7 +440,9 @@ impl Context<'_> {
             let f_ident = field.ident();
             constructor.push(quote!(#f_ident,));
             attrs.push(self.codegen_attr(nc, &rust_struct_name, attr, self_ty, field, &mut tc)?);
-            parser.push(codegen_attr_parse(field, attr, &p_input, &p_endian));
+            parser.push(codegen_attr_parse(
+                field, self_ty, attr, &p_input, &p_endian, nc,
+            ));
         }
 
         let gen = match &tc.generics[..] {
@@ -433,25 +459,79 @@ impl Context<'_> {
             true => None,
             false => Some(quote!('a,)),
         };
+
+        let root_fields: Vec<_> = self_ty
+            .root_obligations
+            .fields()
+            .map(|f| {
+                let f_name = format_ident!("{}", f);
+                quote!(#f_name: u32,)
+            })
+            .collect();
+        let root_values: Vec<_> = self_ty
+            .root_obligations
+            .fields()
+            .map(|f| format_ident!("{}", f))
+            .collect();
+
+        let _root = if !self_ty.root_obligations.is_empty() {
+            Some(quote!(
+                struct _Root {
+                    #(#root_fields)*
+                }
+                let _root = _Root {
+                    #(#root_values)*
+                };
+            ))
+        } else {
+            None
+        };
+
         let parser_name = &self_ty.parser_name;
         let generics = &tc.generics[..];
-        let q_parser = quote!(
+        let q_parser_impl = quote!(
+            let #p_endian = ::nom::number::Endianness::Little;
+            #(#parser)*
+            Ok((#p_input, #id {
+                #(#constructor)*
+            }))
+        );
+        let q_parser_attr = quote!(
             #[cfg(feature = "nom")]
             #[allow(unused_parens)]
-            pub fn #parser_name<#input_lifetime #(#generics),*> (#p_input: &'a [u8]) -> ::nom::IResult<&'a [u8], #id #gen_use> {
-                let #p_endian = ::nom::number::Endianness::Little;
-                #(#parser)*
-                Ok((#p_input, #id {
-                    #(#constructor)*
-                }))
-            }
         );
+        let q_result = quote!(::nom::IResult<&'a [u8], #id #gen_use>);
+        let q_parser = if _root.is_some() {
+            quote!(
+                #q_parser_attr
+                pub fn #parser_name<#input_lifetime #(#generics),*> (
+                    #(#root_fields)*
+                ) -> impl FnMut(&'a [u8]) -> #q_result {
+                    #_root
+                    move |#p_input: &'a [u8]| {
+                        #q_parser_impl
+                    }
+                }
+            )
+        } else {
+            quote!(
+                #q_parser_attr
+                pub fn #parser_name<#input_lifetime #(#generics),*> (#p_input: &'a [u8]) -> #q_result {
+                    #_root
+                    #q_parser_impl
+                }
+            )
+        };
 
         let traits = &tc.traits[..];
 
         let q = quote! {
             #[doc = #doc]
             #(#[doc = #doc_refs])*
+            #[doc = #doc_root_obligations]
+            #[doc = #doc_parent_obligations]
+            #[doc = #doc_parents]
+            #[doc = #doc_depends_on]
             #[derive(Debug, Clone, PartialEq)]
             pub struct #id #gen {
                 #(#attrs),*

@@ -111,5 +111,12 @@ impl NamingContext {
                 gen.need_lifetime = gen.depends_on.iter().any(|f| lifetime_set.contains(f));
             }
         }
+
+        // Finally set all the parent
+        for (name, parents) in dependencies {
+            if let Some(ty) = self.types.get_mut(&name) {
+                ty.parents = parents;
+            }
+        }
     }
 }

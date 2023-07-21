@@ -1,6 +1,0 @@
-{
-    "rust-analyzer.linkedProjects": [
-        "./kaitai-codegen-quote/Cargo.toml",
-        "./kaitai-codegen-quote/Cargo.toml"
-    ]
-}

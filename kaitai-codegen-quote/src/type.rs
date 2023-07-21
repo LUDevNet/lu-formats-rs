@@ -1,6 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use heck::ToUpperCamelCase;
+use kaitai_expr::{parse_expr, Expr};
 use kaitai_struct_types::{
     AnyScalar, Attribute, IntTypeRef, KsySchema, TypeRef, TypeSpec, WellKnownTypeRef,
 };
@@ -9,6 +13,8 @@ use quote::{format_ident, quote};
 
 #[derive(Debug, Clone)]
 pub struct Type {
+    pub is_root: bool,
+
     pub parser_name: Ident,
     pub source_mod: Option<Ident>,
     pub ident: Ident,
@@ -19,19 +25,58 @@ pub struct Type {
     pub depends_on: BTreeSet<String>,
 
     pub fields: Vec<Field>,
+    pub parents: Vec<String>,
+
+    pub root_obligations: ObligationTree,
+    pub parent_obligations: ObligationTree,
+}
+
+#[derive(Default, Clone)]
+pub struct ObligationTree(BTreeMap<String, ObligationTree>);
+
+impl fmt::Debug for ObligationTree {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl ObligationTree {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn fields(&self) -> impl Iterator<Item = &String> {
+        self.0.keys()
+    }
+
+    fn add(&mut self, fields: &[&str]) {
+        if let Some((first, rest)) = fields.split_first() {
+            self.0.entry(first.to_string()).or_default().add(rest);
+        }
+    }
 }
 
 impl Type {
-    fn new_named(key: &str, seq: &[Attribute]) -> Self {
+    fn new_named(key: &str, seq: &[Attribute], is_root: bool) -> Self {
         let rust_struct_name = key.to_upper_camel_case();
         let mut t = Self {
+            is_root,
             parser_name: format_ident!("parse_{}", key),
             source_mod: None,
             ident: format_ident!("{}", rust_struct_name),
             needs_lifetime: false,
             field_generics: BTreeMap::new(),
             depends_on: BTreeSet::new(),
+
             fields: Vec::new(),
+            parents: Vec::new(),
+
+            root_obligations: ObligationTree::new(),
+            parent_obligations: ObligationTree::new(),
         };
         for a in seq {
             t.push_seq_elem(a);
@@ -40,16 +85,33 @@ impl Type {
     }
 
     pub fn new(key: &str, spec: &TypeSpec) -> Self {
-        Self::new_named(key, &spec.seq)
+        Self::new_named(key, &spec.seq, false)
     }
 
     pub fn new_root(spec: &KsySchema) -> Self {
-        Self::new_named(&spec.meta.id.0, &spec.seq)
+        Self::new_named(&spec.meta.id.0, &spec.seq, true)
+    }
+
+    fn check_obligations(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Input("_root", fields) => self.root_obligations.add(fields),
+            Expr::Input("_parent", fields) => self.parent_obligations.add(fields),
+            Expr::Input(_, _) | Expr::Number(_) => {}
+            Expr::BinOp { op: _, args } => {
+                self.check_obligations(&args.0);
+                self.check_obligations(&args.1);
+            }
+        }
     }
 
     fn push_seq_elem(&mut self, a: &Attribute) {
         let orig_attr_id = a.id.as_deref().unwrap();
         let mut f = Field::new(orig_attr_id);
+
+        if let Some(expr) = &a.if_expr {
+            let expr = parse_expr(expr).unwrap();
+            self.check_obligations(&expr);
+        }
 
         if let Some(ty) = &a.ty {
             match ty {
