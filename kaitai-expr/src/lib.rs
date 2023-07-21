@@ -255,19 +255,22 @@ mod tests {
     use super::{parse_expr, Expr, Lexer, Op, ShuntingYard, Token};
 
     const COMPLEX_EXPR_STR: &str = "_root.file_version >= 33 or _root.file_version < 30";
+    fn complex_expr_lhs() -> Expr<'static> {
+        Expr::BinOp {
+            op: Op::GtEq,
+            args: Box::new((Expr::Input("_root", vec!["file_version"]), Expr::Number(33))),
+        }
+    }
+    fn complex_expr_rhs() -> Expr<'static> {
+        Expr::BinOp {
+            op: Op::Lt,
+            args: Box::new((Expr::Input("_root", vec!["file_version"]), Expr::Number(30))),
+        }
+    }
     fn complex_expr() -> Expr<'static> {
         Expr::BinOp {
             op: Op::Or,
-            args: Box::new((
-                Expr::BinOp {
-                    op: Op::GtEq,
-                    args: Box::new((Expr::Input("_root", vec!["file_version"]), Expr::Number(33))),
-                },
-                Expr::BinOp {
-                    op: Op::Lt,
-                    args: Box::new((Expr::Input("_root", vec!["file_version"]), Expr::Number(30))),
-                },
-            )),
+            args: Box::new((complex_expr_lhs(), complex_expr_rhs())),
         }
     }
 
@@ -353,6 +356,7 @@ mod tests {
         vm.exec(Token::BinOp(Op::Dot));
         vm.exec(Token::Number(33));
         vm.exec(Token::BinOp(Op::GtEq));
+        assert_eq!(vm.stack(), &[complex_expr_lhs()]);
         vm.exec(Token::Ident("_root"));
         vm.exec(Token::Ident("file_version"));
         vm.exec(Token::BinOp(Op::Dot));
