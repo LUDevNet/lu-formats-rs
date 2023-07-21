@@ -25,6 +25,9 @@ pub enum Op {
     And,
     Or,
 
+    TernaryTrue,
+    TernaryFalse,
+
     LParen,
     RParen,
 }
@@ -130,6 +133,14 @@ impl<'a> Iterator for ShuntingYard<'a> {
         loop {
             match self.inner.peek().copied() {
                 Some(Token::Ident(_) | Token::Number(_)) => break self.inner.next(),
+                Some(Token::BinOp(o1)) if o1 == Op::RParen => {
+                    if self.op_stack.last() == Some(&Op::LParen) {
+                        self.inner.next(); // discard right paren
+                        self.op_stack.pop(); // discard left paren
+                    } else {
+                        break self.op_stack.pop().map(Token::BinOp);
+                    }
+                }
                 Some(Token::BinOp(o1)) => match self.op_stack.last().copied() {
                     Some(o2)
                         if o2 != Op::LParen
@@ -214,6 +225,22 @@ impl<'a> Iterator for Lexer<'a> {
                     self.rest = chars.as_str();
                     break Some(Token::BinOp(Op::Dot));
                 }
+                Some('(') => {
+                    self.rest = chars.as_str();
+                    break Some(Token::BinOp(Op::LParen));
+                }
+                Some(')') => {
+                    self.rest = chars.as_str();
+                    break Some(Token::BinOp(Op::RParen));
+                }
+                Some('?') => {
+                    self.rest = chars.as_str();
+                    break Some(Token::BinOp(Op::TernaryTrue));
+                }
+                Some(':') => {
+                    self.rest = chars.as_str();
+                    break Some(Token::BinOp(Op::TernaryFalse));
+                }
                 Some('0'..='9') => {
                     break Some(Token::Number(
                         u64::from_str(loop {
@@ -284,6 +311,29 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenizer_parens() {
+        let mut t = Lexer::new("(_root.file_version <= 33 or _root.file_version >= 39) ? 2 : 5");
+        assert_eq!(t.next(), Some(Token::BinOp(Op::LParen)));
+        assert_eq!(t.next(), Some(Token::Ident("_root")));
+        assert_eq!(t.next(), Some(Token::BinOp(Op::Dot)));
+        assert_eq!(t.next(), Some(Token::Ident("file_version")));
+        assert_eq!(t.next(), Some(Token::BinOp(Op::LtEq)));
+        assert_eq!(t.next(), Some(Token::Number(33)));
+        assert_eq!(t.next(), Some(Token::BinOp(Op::Or)));
+        assert_eq!(t.next(), Some(Token::Ident("_root")));
+        assert_eq!(t.next(), Some(Token::BinOp(Op::Dot)));
+        assert_eq!(t.next(), Some(Token::Ident("file_version")));
+        assert_eq!(t.next(), Some(Token::BinOp(Op::GtEq)));
+        assert_eq!(t.next(), Some(Token::Number(39)));
+        assert_eq!(t.next(), Some(Token::BinOp(Op::RParen)));
+        assert_eq!(t.next(), Some(Token::BinOp(Op::TernaryTrue)));
+        assert_eq!(t.next(), Some(Token::Number(2)));
+        assert_eq!(t.next(), Some(Token::BinOp(Op::TernaryFalse)));
+        assert_eq!(t.next(), Some(Token::Number(5)));
+        assert_eq!(t.next(), None);
+    }
+
+    #[test]
     fn test_tokenizer_complex() {
         let mut t = Lexer::new("_root.file_version >= 33 or _root.file_version < 30");
         assert_eq!(t.next(), Some(Token::Ident("_root")));
@@ -306,6 +356,29 @@ mod tests {
         assert_eq!(yard.next(), Some(Token::Ident("file_version")));
         assert_eq!(yard.next(), Some(Token::Number(38)));
         assert_eq!(yard.next(), Some(Token::BinOp(Op::GtEq)));
+        assert_eq!(yard.next(), None);
+    }
+
+    #[test]
+    fn test_shunting_yard_parens() {
+        let mut yard = ShuntingYard::from(Lexer::new(
+            "(_root.file_version <= 33 or _root.file_version >= 39) ? 2 : 5",
+        ));
+        assert_eq!(yard.next(), Some(Token::Ident("_root")));
+        assert_eq!(yard.next(), Some(Token::Ident("file_version")));
+        assert_eq!(yard.next(), Some(Token::BinOp(Op::Dot)));
+        assert_eq!(yard.next(), Some(Token::Number(33)));
+        assert_eq!(yard.next(), Some(Token::BinOp(Op::LtEq)));
+        assert_eq!(yard.next(), Some(Token::Ident("_root")));
+        assert_eq!(yard.next(), Some(Token::Ident("file_version")));
+        assert_eq!(yard.next(), Some(Token::BinOp(Op::Dot)));
+        assert_eq!(yard.next(), Some(Token::Number(39)));
+        assert_eq!(yard.next(), Some(Token::BinOp(Op::GtEq)));
+        assert_eq!(yard.next(), Some(Token::BinOp(Op::Or)));
+        assert_eq!(yard.next(), Some(Token::Number(2)));
+        assert_eq!(yard.next(), Some(Token::BinOp(Op::TernaryTrue)));
+        assert_eq!(yard.next(), Some(Token::Number(5)));
+        assert_eq!(yard.next(), Some(Token::BinOp(Op::TernaryFalse)));
         assert_eq!(yard.next(), None);
     }
 

@@ -9,8 +9,8 @@ use ctx::NamingContext;
 use heck::ToUpperCamelCase;
 use kaitai_expr::{parse_expr, Expr, Op};
 use kaitai_struct_types::{
-    AnyScalar, Attribute, Contents, EndianSpec, IntTypeRef, KsySchema, StringOrArray, TypeRef,
-    WellKnownTypeRef,
+    AnyScalar, Attribute, Contents, EndianSpec, IntTypeRef, KsySchema, Repeat, StringOrArray,
+    TypeRef, WellKnownTypeRef,
 };
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
@@ -203,7 +203,7 @@ fn codegen_expr(_expr: &Expr) -> TokenStream {
                 Op::Eq => quote!((#lhs == #rhs)),
                 Op::And => quote!((#lhs && #rhs)),
                 Op::Or => quote!((#lhs || #rhs)),
-                Op::LParen | Op::RParen => todo!(),
+                Op::LParen | Op::RParen | Op::TernaryTrue | Op::TernaryFalse => quote!(0xBEEF),
             }
         }
     }
@@ -323,7 +323,19 @@ fn codegen_attr_parse(
         quote!(::nom::number::complete::le_u32)
     };
     if let Some(_r) = &attr.repeat {
-        parser = quote!(::nom::multi::count(#parser, 1));
+        parser = match _r {
+            Repeat::Expr => {
+                let expr = attr
+                    .repeat_expr
+                    .as_ref()
+                    .expect("repeat == 'expr'")
+                    .as_str();
+                let expr = codegen_expr_str(expr);
+                quote!(::nom::multi::count(#parser, #expr as usize))
+            }
+            Repeat::Eos => todo!(),
+            Repeat::Until => todo!(),
+        }
     } else if let Some(_e) = &attr.if_expr {
         let expr = codegen_expr_str(_e);
         parser = quote!(::nom::combinator::cond(#expr, #parser));
