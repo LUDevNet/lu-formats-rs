@@ -4,10 +4,10 @@ include!(concat!(env!("OUT_DIR"), "/lib.rs"));
 mod tests {
     use crate::{
         common::{
-            parse_quaternion, parse_u1_color, parse_u1_str, parse_u4_str, Quaternion, U1Color,
-            U1Str, U4Str,
+            parse_quaternion, parse_u1_color, parse_u1_str, parse_u4_str, Bool, Quaternion,
+            U1Color, U1Str, U1Wstr, U4Str,
         },
-        files::luz::{parse_boundary_info, BoundaryInfo},
+        files::luz::{parse_boundary_info, parse_camera_data, BoundaryInfo, CameraData},
     };
 
     use super::common::{parse_vector3, Vector3};
@@ -103,6 +103,7 @@ mod tests {
         )
     }
 
+    /// <https://docs.lu-dev.net/en/latest/file-structures/zone.html#luz-types-boundary_info>
     #[test]
     fn test_boundary_info() {
         let mut bytes = Vec::<u8>::new();
@@ -141,5 +142,24 @@ mod tests {
                 }
             ))
         )
+    }
+
+    /// <https://docs.lu-dev.net/en/latest/file-structures/zone.html#luz-types-camera_data>
+    #[test]
+    fn test_camera_data() {
+        let bytes = vec![0x03, b'A', 0x00, b'B', 0x00, b'C', 0x00, 0x01];
+        assert_eq!(
+            parse_camera_data(&bytes),
+            Ok((
+                EMPTY,
+                CameraData {
+                    next_path: U1Wstr {
+                        length: 3,
+                        str: &[b'A', 0x00, b'B', 0x00, b'C', 0x00]
+                    },
+                    rotate_player: Some(Bool { bool: 0x01 })
+                }
+            ))
+        );
     }
 }
