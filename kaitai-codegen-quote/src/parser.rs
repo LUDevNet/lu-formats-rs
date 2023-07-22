@@ -108,17 +108,14 @@ pub fn user_type(named_ty: &Type, is_root_parser: bool) -> TokenStream {
 
 fn codegen_expr(_expr: &Expr) -> TokenStream {
     match _expr {
-        Expr::Input(i, fields) => match *i {
-            "_parent" => quote!(0xBEEF),
-            _ => {
-                let mut ts = format_ident!("{}", i).into_token_stream();
-                for field in fields {
-                    let f = format_ident!("{}", field);
-                    ts = quote!(#ts.#f);
-                }
-                ts
+        Expr::Input(i, fields) => {
+            let mut ts = format_ident!("{}", i).into_token_stream();
+            for field in fields {
+                let f = format_ident!("{}", field);
+                ts = quote!(#ts.#f);
             }
-        },
+            ts
+        }
         Expr::Number(u) => Literal::u64_unsuffixed(*u).into_token_stream(),
         Expr::BinOp { op, args } => {
             let lhs = codegen_expr(&args.0);

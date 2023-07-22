@@ -149,7 +149,7 @@ mod tests {
     fn test_camera_data() {
         let bytes = vec![0x03, b'A', 0x00, b'B', 0x00, b'C', 0x00, 0x01];
         assert_eq!(
-            parse_camera_data(&bytes),
+            parse_camera_data()(&bytes),
             Ok((
                 EMPTY,
                 CameraData {

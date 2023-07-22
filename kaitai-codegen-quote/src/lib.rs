@@ -424,6 +424,49 @@ impl Context<'_> {
         } else {
             None
         };
+        let _parent = (!self_ty.parent_obligations.is_empty()).then(|| {
+            let mut parent_values = Vec::<TokenStream>::new();
+            let mut parent_fields = Vec::<TokenStream>::new();
+            let mut prev = Vec::<TokenStream>::new();
+            for field in self_ty.parent_obligations.fields() {
+                let field_ident = format_ident!("{}", field);
+                let (field_ty, field_val) = if field == "_parent" {
+                    let pp_ident = format_ident!("_ParentParent");
+                    let mut pp_values = Vec::<TokenStream>::new();
+                    let mut pp_fields = Vec::<TokenStream>::new();
+                    let obligations = self_ty.parent_obligations.get("_parent").unwrap();
+                    for fields in obligations.fields() {
+                        let pp_field_ty = quote!(u32);
+                        let pp_field_id = format_ident!("{}", fields);
+                        pp_fields.push(quote!(#pp_field_id: #pp_field_ty));
+                        pp_values.push(quote!(#pp_field_id: 0xBEEF));
+                    }
+                    prev.push(quote!(struct #pp_ident {
+                        #(#pp_fields),*
+                    }));
+                    (
+                        quote!(#pp_ident),
+                        quote!(#pp_ident {
+                            #(#pp_values),*
+                        }),
+                    )
+                } else {
+                    (quote!(u32), quote!(0xBEEF))
+                };
+                parent_values.push(quote!(#field_ident: #field_val));
+                parent_fields.push(quote!(#field_ident: #field_ty));
+            }
+            assert_eq!(parent_fields.len(), parent_values.len());
+            quote!(
+                #(#prev)*
+                struct _Parent {
+                    #(#parent_fields),*
+                }
+                let _parent = _Parent {
+                    #(#parent_values),*
+                };
+            )
+        });
 
         let _input_ty = quote!(&'a [u8]);
         let _external_field_generics: Vec<_> = self_ty
@@ -455,7 +498,10 @@ impl Context<'_> {
             #[allow(unused_parens)]
         );
         let q_result = quote!(::nom::IResult<#_input_ty, #id #gen_use>);
-        let q_parser = if _root.is_some() || !_external_field_generics.is_empty() {
+        let q_parser = if _root.is_some()
+            || _parent.is_some()
+            || !_external_field_generics.is_empty()
+        {
             quote!(
                 #q_parser_attr
                 pub fn #parser_name<#input_lifetime #(#generics),*> (
@@ -463,6 +509,7 @@ impl Context<'_> {
                     #(#_external_field_generics)*
                 ) -> impl FnMut(#_input_ty) -> #q_result {
                     #_root
+                    #_parent
                     move |#p_input: #_input_ty| {
                         #q_parser_impl
                     }
@@ -472,7 +519,6 @@ impl Context<'_> {
             quote!(
                 #q_parser_attr
                 pub fn #parser_name<#input_lifetime #(#generics),*> (#p_input: &'a [u8]) -> #q_result {
-                    #_root
                     #q_parser_impl
                 }
             )

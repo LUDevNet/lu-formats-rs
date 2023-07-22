@@ -70,6 +70,10 @@ impl ObligationTree {
         self.0.keys()
     }
 
+    pub fn get(&self, field: &str) -> Option<&ObligationTree> {
+        self.0.get(field)
+    }
+
     fn add(&mut self, fields: &[&str]) {
         if let Some((first, rest)) = fields.split_first() {
             self.0.entry(first.to_string()).or_default().add(rest);
