@@ -1,6 +1,9 @@
 use crate::{
-    common::{Bool, U1Wstr},
-    files::luz::{parse_boundary_info, parse_camera_data, BoundaryInfo, CameraData},
+    common::{Bool, QuaternionWxyz, U1Wstr},
+    files::luz::{
+        parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, BoundaryInfo,
+        CameraData, CameraWaypointData,
+    },
 };
 
 use crate::common::Vector3;
@@ -79,4 +82,39 @@ fn test_camera_data() {
             }
         ))
     );
+}
+
+#[test]
+fn test_camera_waypoint_data() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend(&33.3_f32.to_le_bytes());
+    bytes.extend(&0.5_f32.to_le_bytes());
+    bytes.extend(&100_f32.to_le_bytes());
+    bytes.extend(&7_f32.to_le_bytes());
+
+    bytes.extend(&2300_f32.to_le_bytes());
+    bytes.extend(&80.2_f32.to_le_bytes());
+    bytes.extend(&999_f32.to_le_bytes());
+    bytes.extend(&(-300.0_f32).to_le_bytes());
+    bytes.extend(&66_f32.to_le_bytes());
+
+    assert_eq!(
+        parse_camera_waypoint_data(&bytes),
+        Ok((
+            EMPTY,
+            CameraWaypointData {
+                rotation: QuaternionWxyz {
+                    x: 0.5,
+                    y: 100.0,
+                    z: 7.0,
+                    w: 33.3,
+                },
+                time: 2300.0,
+                fov: 80.2,
+                tension: 999.0,
+                continuity: -300.0,
+                bias: 66.0
+            }
+        ))
+    )
 }

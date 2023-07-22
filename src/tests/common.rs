@@ -3,7 +3,7 @@ use crate::{
         parse_quaternion, parse_u1_color, parse_u1_str, parse_u4_str, Quaternion, U1Color, U1Str,
         U4Str,
     },
-    common::{parse_vector3, Vector3},
+    common::{parse_quaternion_wxyz, parse_vector3, QuaternionWxyz, Vector3},
 };
 use nom::Finish;
 
@@ -39,6 +39,28 @@ fn test_quaternion() {
         Ok((
             EMPTY,
             Quaternion {
+                x: 0.5,
+                y: 100.0,
+                z: 7.0,
+                w: 33.3,
+            }
+        ))
+    )
+}
+
+#[test]
+fn test_quaternion_wxyz() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend(&33.3_f32.to_le_bytes());
+    bytes.extend(&0.5_f32.to_le_bytes());
+    bytes.extend(&100_f32.to_le_bytes());
+    bytes.extend(&7_f32.to_le_bytes());
+
+    assert_eq!(
+        parse_quaternion_wxyz(&bytes).finish(),
+        Ok((
+            EMPTY,
+            QuaternionWxyz {
                 x: 0.5,
                 y: 100.0,
                 z: 7.0,
