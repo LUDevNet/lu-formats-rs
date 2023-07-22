@@ -1,9 +1,10 @@
 use crate::{
-    common::{Bool, QuaternionWxyz, U1Wstr},
+    common::{Bool, QuaternionWxyz, U1Wstr, U4Wstr},
     files::luz::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
-        parse_lnv_entry, parse_platform_data, parse_platform_waypoint_data, BoundaryInfo,
-        CameraData, CameraWaypointData, Lnv, LnvEntry, PlatformData, PlatformWaypointData,
+        parse_lnv_entry, parse_platform_data, parse_platform_waypoint_data, parse_property_data,
+        BoundaryInfo, CameraData, CameraWaypointData, Lnv, LnvEntry, PlatformData,
+        PlatformWaypointData, PropertyData,
     },
 };
 
@@ -282,6 +283,168 @@ fn test_platform_waypoint_data() {
                     length: 3,
                     str: b"X\0Y\0Z\0"
                 })
+            }
+        ))
+    );
+}
+
+#[test]
+fn test_property_data() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend(1u32.to_le_bytes());
+    bytes.extend(50u32.to_le_bytes());
+    bytes.extend(100u32.to_le_bytes());
+    bytes.extend(1200u64.to_le_bytes());
+
+    assert_eq!(
+        parse_property_data(4)(&bytes),
+        Ok((
+            EMPTY,
+            PropertyData {
+                property_path_type: 1,
+                price: 50,
+                time: 100,
+                associated_zone: 1200,
+                name: None,
+                description: None,
+                property_type: None,
+                clone_limit: None,
+                reputation_multiplier: None,
+                period_type: None,
+                achievement_required: None,
+                zone_position: None,
+                max_build_height: None
+            }
+        ))
+    );
+
+    bytes.extend(b"\x04N\0a\0m\0e\0");
+    bytes.extend(b"\x05\0\0\0D\0e\0s\0c\0r\0");
+
+    assert_eq!(
+        parse_property_data(5)(&bytes),
+        Ok((
+            EMPTY,
+            PropertyData {
+                property_path_type: 1,
+                price: 50,
+                time: 100,
+                associated_zone: 1200,
+                name: Some(U1Wstr {
+                    length: 4,
+                    str: b"N\0a\0m\0e\0"
+                }),
+                description: Some(U4Wstr {
+                    length: 5,
+                    str: b"D\0e\0s\0c\0r\0"
+                }),
+                property_type: None,
+                clone_limit: None,
+                reputation_multiplier: None,
+                period_type: None,
+                achievement_required: None,
+                zone_position: None,
+                max_build_height: None
+            }
+        ))
+    );
+
+    bytes.extend(&2u32.to_le_bytes());
+    assert_eq!(
+        parse_property_data(6)(&bytes),
+        Ok((
+            EMPTY,
+            PropertyData {
+                property_path_type: 1,
+                price: 50,
+                time: 100,
+                associated_zone: 1200,
+                name: Some(U1Wstr {
+                    length: 4,
+                    str: b"N\0a\0m\0e\0"
+                }),
+                description: Some(U4Wstr {
+                    length: 5,
+                    str: b"D\0e\0s\0c\0r\0"
+                }),
+                property_type: Some(2),
+                clone_limit: None,
+                reputation_multiplier: None,
+                period_type: None,
+                achievement_required: None,
+                zone_position: None,
+                max_build_height: None
+            }
+        ))
+    );
+
+    bytes.extend(&20000u32.to_le_bytes());
+    bytes.extend(&5f32.to_le_bytes());
+    bytes.extend(&2u32.to_le_bytes());
+    assert_eq!(
+        parse_property_data(7)(&bytes),
+        Ok((
+            EMPTY,
+            PropertyData {
+                property_path_type: 1,
+                price: 50,
+                time: 100,
+                associated_zone: 1200,
+                name: Some(U1Wstr {
+                    length: 4,
+                    str: b"N\0a\0m\0e\0"
+                }),
+                description: Some(U4Wstr {
+                    length: 5,
+                    str: b"D\0e\0s\0c\0r\0"
+                }),
+                property_type: Some(2),
+                clone_limit: Some(20000),
+                reputation_multiplier: Some(5.0),
+                period_type: Some(2),
+                achievement_required: None,
+                zone_position: None,
+                max_build_height: None
+            }
+        ))
+    );
+
+    bytes.extend(&4444u32.to_le_bytes());
+
+    bytes.extend(&20f32.to_le_bytes());
+    bytes.extend(&20f32.to_le_bytes());
+    bytes.extend(&20f32.to_le_bytes());
+
+    bytes.extend(&150f32.to_le_bytes());
+
+    assert_eq!(
+        parse_property_data(8)(&bytes),
+        Ok((
+            EMPTY,
+            PropertyData {
+                property_path_type: 1,
+                price: 50,
+                time: 100,
+                associated_zone: 1200,
+                name: Some(U1Wstr {
+                    length: 4,
+                    str: b"N\0a\0m\0e\0"
+                }),
+                description: Some(U4Wstr {
+                    length: 5,
+                    str: b"D\0e\0s\0c\0r\0"
+                }),
+                property_type: Some(2),
+                clone_limit: Some(20000),
+                reputation_multiplier: Some(5.0),
+                period_type: Some(2),
+                achievement_required: Some(4444),
+                zone_position: Some(Vector3 {
+                    x: 20.0,
+                    y: 20.0,
+                    z: 20.0
+                }),
+                max_build_height: Some(150.0)
             }
         ))
     );
