@@ -2,7 +2,8 @@ use crate::{
     common::{Bool, QuaternionWxyz, U1Wstr},
     files::luz::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
-        parse_lnv_entry, BoundaryInfo, CameraData, CameraWaypointData, Lnv, LnvEntry,
+        parse_lnv_entry, parse_platform_data, BoundaryInfo, CameraData, CameraWaypointData, Lnv,
+        LnvEntry, PlatformData,
     },
 };
 
@@ -180,4 +181,46 @@ fn test_lnv() {
             }
         ))
     )
+}
+
+#[test]
+fn test_platform_data() {
+    let bytes: Vec<u8> = vec![];
+    assert_eq!(
+        parse_platform_data(12)(&bytes),
+        Ok((
+            EMPTY,
+            PlatformData {
+                traveling_audio_guid: None,
+                time_based_movement: None
+            }
+        ))
+    );
+
+    let bytes: Vec<u8> = vec![0x02, b'A', 0, b'C', 0];
+    assert_eq!(
+        parse_platform_data(13)(&bytes),
+        Ok((
+            EMPTY,
+            PlatformData {
+                traveling_audio_guid: Some(U1Wstr {
+                    length: 2,
+                    str: b"A\0C\0"
+                }),
+                time_based_movement: None
+            }
+        ))
+    );
+
+    let bytes: Vec<u8> = vec![0x01];
+    assert_eq!(
+        parse_platform_data(18)(&bytes),
+        Ok((
+            EMPTY,
+            PlatformData {
+                traveling_audio_guid: None,
+                time_based_movement: Some(Bool { bool: 0x01 })
+            }
+        ))
+    );
 }
