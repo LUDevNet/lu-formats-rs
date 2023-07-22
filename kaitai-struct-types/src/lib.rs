@@ -284,7 +284,7 @@ pub struct MetaSpec {
     pub endian: Option<Endian>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Copy, Clone)]
 /// Endianness qualifier
 pub enum Endian {
     /// Least Significant Byte first

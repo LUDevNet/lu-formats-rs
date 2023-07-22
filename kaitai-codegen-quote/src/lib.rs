@@ -10,7 +10,7 @@ use ctx::NamingContext;
 use heck::ToUpperCamelCase;
 use kaitai_expr::{parse_expr, Expr, Op};
 use kaitai_struct_types::{
-    AnyScalar, Attribute, Contents, IntTypeRef, KsySchema, Repeat, StringOrArray, TypeRef,
+    AnyScalar, Attribute, Contents, Endian, IntTypeRef, KsySchema, Repeat, StringOrArray, TypeRef,
     WellKnownTypeRef,
 };
 use proc_macro2::{Ident, Literal, TokenStream};
@@ -473,10 +473,14 @@ impl Context<'_> {
             })
             .collect();
 
+        let v_endian = match self_ty.endian {
+            Endian::LittleEndian => quote!(::nom::number::Endianness::Little),
+            Endian::BigEndian => quote!(::nom::number::Endianness::Big),
+        };
         let parser_name = &self_ty.parser_name;
         let generics = &tc.generics[..];
         let q_parser_impl = quote!(
-            let #p_endian = ::nom::number::Endianness::Little;
+            let #p_endian = #v_endian;
             #(#parser)*
             Ok((#p_input, #id {
                 #(#constructor)*
@@ -556,12 +560,13 @@ impl Context<'_> {
         }
 
         // First stage analysis
+        let _root_ty = Type::new_root(schema);
+        let root_endian = _root_ty.endian;
+        nc.set_root(id, _root_ty);
         for (key, spec) in &schema.types {
-            let st = Type::new(key, spec);
+            let st = Type::new(key, spec, root_endian);
             nc.add(key, st);
         }
-
-        nc.set_root(id, Type::new_root(schema));
 
         nc.process_dependencies();
 

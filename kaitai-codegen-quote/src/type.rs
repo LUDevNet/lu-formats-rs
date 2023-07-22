@@ -6,7 +6,7 @@ use std::{
 use heck::ToUpperCamelCase;
 use kaitai_expr::{parse_expr, Expr};
 use kaitai_struct_types::{
-    AnyScalar, Attribute, IntTypeRef, KsySchema, TypeRef, TypeSpec, WellKnownTypeRef,
+    AnyScalar, Attribute, Endian, IntTypeRef, KsySchema, TypeRef, TypeSpec, WellKnownTypeRef,
 };
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
@@ -14,6 +14,7 @@ use quote::{format_ident, quote};
 #[derive(Debug, Clone)]
 pub struct Type {
     pub is_root: bool,
+    pub endian: Endian,
 
     pub parser_name: Ident,
     pub source_mod: Option<Ident>,
@@ -77,10 +78,11 @@ impl ObligationTree {
 }
 
 impl Type {
-    fn new_named(key: &str, seq: &[Attribute], is_root: bool) -> Self {
+    fn new_named(key: &str, seq: &[Attribute], is_root: bool, endian: Endian) -> Self {
         let rust_struct_name = key.to_upper_camel_case();
         let mut t = Self {
             is_root,
+            endian,
             parser_name: format_ident!("parse_{}", key),
             source_mod: None,
             ident: format_ident!("{}", rust_struct_name),
@@ -103,12 +105,18 @@ impl Type {
         t
     }
 
-    pub fn new(key: &str, spec: &TypeSpec) -> Self {
-        Self::new_named(key, &spec.seq, false)
+    pub fn new(key: &str, spec: &TypeSpec, root_endian: Endian) -> Self {
+        let endian = spec
+            .meta
+            .as_ref()
+            .and_then(|m| m.endian)
+            .unwrap_or(root_endian);
+        Self::new_named(key, &spec.seq, false, endian)
     }
 
     pub fn new_root(spec: &KsySchema) -> Self {
-        Self::new_named(&spec.meta.id.0, &spec.seq, true)
+        let endian = spec.meta.endian.unwrap_or(Endian::LittleEndian);
+        Self::new_named(&spec.meta.id.0, &spec.seq, true, endian)
     }
 
     fn check_obligations(&mut self, expr: &Expr) {
