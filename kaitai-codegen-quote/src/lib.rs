@@ -283,7 +283,7 @@ impl Context<'_> {
     ) -> io::Result<TokenStream> {
         let orig_attr_id = field.id();
         let attr_id = field.ident();
-        let attr_doc = attr.doc.as_deref().unwrap_or("");
+        let attr_doc = attr.doc.as_deref().map(|d| quote!(#[doc = #d]));
         let attr_doc_ref = attr.doc_ref.as_ref();
         let attr_doc_refs = attr_doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
 
@@ -327,7 +327,7 @@ impl Context<'_> {
         };
 
         Ok(quote!(
-            #[doc = #attr_doc]
+            #attr_doc
             #(#[doc = #attr_doc_refs])*
             #[doc = #ty_doc]
             #if_doc
@@ -347,7 +347,7 @@ impl Context<'_> {
     ) -> io::Result<TokenStream> {
         let rust_struct_name = name.to_upper_camel_case();
         let id = format_ident!("{}", rust_struct_name);
-        let doc = doc.unwrap_or("");
+        let doc = doc.map(|d| quote!(#[doc = #d]));
         let doc_root_obligations = self_ty.root_obligations.doc("_root");
         let doc_parent_obligations = self_ty.parent_obligations.doc("_parent");
         let doc_parents = doc_type_list(nc, "parents", &self_ty.parents);
@@ -536,7 +536,7 @@ impl Context<'_> {
         let traits = &tc.traits[..];
 
         let q = quote! {
-            #[doc = #doc]
+            #doc
             #(#[doc = #doc_refs])*
             #doc_root_obligations
             #doc_parent_obligations
