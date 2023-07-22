@@ -8,14 +8,15 @@ use std::{
 
 use ctx::NamingContext;
 use heck::ToUpperCamelCase;
-use kaitai_expr::{parse_expr, Expr, Op};
 use kaitai_struct_types::{
     AnyScalar, Attribute, Contents, Endian, IntTypeRef, KsySchema, Repeat, StringOrArray, TypeRef,
     WellKnownTypeRef,
 };
-use proc_macro2::{Ident, Literal, TokenStream};
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use r#type::{Field, FieldGenerics, ResolvedType, Type};
+
+use crate::parser::codegen_expr_str;
 
 mod ctx;
 mod parser;
@@ -171,47 +172,6 @@ fn codegen_type_ref(
             }
         }
     }
-}
-
-fn codegen_expr(_expr: &Expr) -> TokenStream {
-    match _expr {
-        Expr::Input(i, fields) => match *i {
-            "_parent" => quote!(0xBEEF),
-            _ => {
-                let mut ts = format_ident!("{}", i).into_token_stream();
-                for field in fields {
-                    let f = format_ident!("{}", field);
-                    ts = quote!(#ts.#f);
-                }
-                ts
-            }
-        },
-        Expr::Number(u) => Literal::u64_unsuffixed(*u).into_token_stream(),
-        Expr::BinOp { op, args } => {
-            let lhs = codegen_expr(&args.0);
-            let rhs = codegen_expr(&args.1);
-            match op {
-                Op::Mul => quote!((#lhs * #rhs)),
-                Op::Div => quote!((#lhs / #rhs)),
-                Op::Sub => quote!((#lhs - #rhs)),
-                Op::Add => quote!((#lhs + #rhs)),
-                Op::Dot => quote!((#lhs).#rhs),
-                Op::GtEq => quote!((#lhs >= #rhs)),
-                Op::Gt => quote!((#lhs > #rhs)),
-                Op::LtEq => quote!((#lhs <= #rhs)),
-                Op::Lt => quote!((#lhs < #rhs)),
-                Op::Eq => quote!((#lhs == #rhs)),
-                Op::And => quote!((#lhs && #rhs)),
-                Op::Or => quote!((#lhs || #rhs)),
-                Op::LParen | Op::RParen | Op::TernaryTrue | Op::TernaryFalse => quote!(0xBEEF),
-            }
-        }
-    }
-}
-
-fn codegen_expr_str(expr: &str) -> TokenStream {
-    let parsed_expr = parse_expr(expr).expect(expr);
-    codegen_expr(&parsed_expr)
 }
 
 fn codegen_attr_parse(

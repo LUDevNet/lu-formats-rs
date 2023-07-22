@@ -2,7 +2,10 @@ include!(concat!(env!("OUT_DIR"), "/lib.rs"));
 
 #[cfg(test)]
 mod tests {
-    use crate::common::{parse_quaternion, parse_u1_color, Quaternion, U1Color};
+    use crate::common::{
+        parse_quaternion, parse_u1_color, parse_u1_str, parse_u4_str, Quaternion, U1Color, U1Str,
+        U4Str,
+    };
 
     use super::common::{parse_vector3, Vector3};
     use nom::Finish;
@@ -60,6 +63,38 @@ mod tests {
                     r: 0xFF,
                     g: 0x50,
                     b: 0x71,
+                }
+            ))
+        )
+    }
+
+    #[test]
+    fn test_u1_str() {
+        let bytes = vec![0x03, b'A', b'B', b'C'];
+
+        assert_eq!(
+            parse_u1_str(&bytes).finish(),
+            Ok((
+                EMPTY,
+                U1Str {
+                    length: 3,
+                    str: b"ABC"
+                }
+            ))
+        )
+    }
+
+    #[test]
+    fn test_u4_str() {
+        let bytes = vec![0x03, 0x00, 0x00, 0x00, b'A', b'B', b'C'];
+
+        assert_eq!(
+            parse_u4_str(&bytes).finish(),
+            Ok((
+                EMPTY,
+                U4Str {
+                    length: 3,
+                    str: b"ABC"
                 }
             ))
         )
