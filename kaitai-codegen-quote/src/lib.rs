@@ -108,6 +108,9 @@ fn codegen_type_ref(
             let var_enum_doc = format!("Raw variants for [`{}::{}`]", enclosing_type, discriminant);
             let mut enum_cases: Vec<TokenStream> = Vec::<TokenStream>::with_capacity(cases.len());
             let mut trait_impl_cases = Vec::<TokenStream>::with_capacity(cases.len());
+
+            let mut inner_set = BTreeSet::<String>::new();
+
             for (case_key, case_type) in cases.iter() {
                 let mut _enum_set = BTreeSet::<String>::new();
                 let name: String = match case_key {
@@ -135,9 +138,13 @@ fn codegen_type_ref(
                     false => quote!(),
                 };
 
-                trait_impl_cases.push(quote!(
-                    impl #l #t for #inner {}
-                ));
+                let inner_str = inner.to_string();
+                if !inner_set.contains(&inner_str) {
+                    inner_set.insert(inner_str);
+                    trait_impl_cases.push(quote!(
+                        impl #l #t for #inner {}
+                    ));
+                }
             }
 
             // variant enum generics
