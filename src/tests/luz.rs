@@ -1,8 +1,8 @@
 use crate::{
     common::{Bool, QuaternionWxyz, U1Wstr},
     files::luz::{
-        parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, BoundaryInfo,
-        CameraData, CameraWaypointData,
+        parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
+        parse_lnv_entry, BoundaryInfo, CameraData, CameraWaypointData, Lnv, LnvEntry,
     },
 };
 
@@ -114,6 +114,69 @@ fn test_camera_waypoint_data() {
                 tension: 999.0,
                 continuity: -300.0,
                 bias: 66.0
+            }
+        ))
+    )
+}
+
+#[test]
+fn test_lnv_entry() {
+    let bytes = vec![
+        0x03, b'A', 0, b'B', 0, b'C', 0, 0x04, b'D', 0, b'E', 0, b'F', 0, b'G', 0,
+    ];
+    assert_eq!(
+        parse_lnv_entry(&bytes),
+        Ok((
+            EMPTY,
+            LnvEntry {
+                name: U1Wstr {
+                    length: 3,
+                    str: b"A\0B\0C\0",
+                },
+                type_value: U1Wstr {
+                    length: 4,
+                    str: b"D\0E\0F\0G\0",
+                }
+            }
+        ))
+    )
+}
+
+#[test]
+fn test_lnv() {
+    let bytes = vec![
+        0x02, 0, 0, 0, //
+        0x03, b'A', 0, b'B', 0, b'C', 0, 0x04, b'D', 0, b'E', 0, b'F', 0, b'G', 0, //
+        0x03, b'A', 0, b'B', 0, b'C', 0, 0x04, b'D', 0, b'E', 0, b'F', 0, b'G', 0,
+    ];
+    assert_eq!(
+        parse_lnv(&bytes),
+        Ok((
+            EMPTY,
+            Lnv {
+                num_entries: 2,
+                entries: vec![
+                    LnvEntry {
+                        name: U1Wstr {
+                            length: 3,
+                            str: b"A\0B\0C\0",
+                        },
+                        type_value: U1Wstr {
+                            length: 4,
+                            str: b"D\0E\0F\0G\0",
+                        }
+                    },
+                    LnvEntry {
+                        name: U1Wstr {
+                            length: 3,
+                            str: b"A\0B\0C\0",
+                        },
+                        type_value: U1Wstr {
+                            length: 4,
+                            str: b"D\0E\0F\0G\0",
+                        }
+                    }
+                ]
             }
         ))
     )
