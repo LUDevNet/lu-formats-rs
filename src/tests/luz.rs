@@ -2,8 +2,8 @@ use crate::{
     common::{Bool, QuaternionWxyz, U1Wstr},
     files::luz::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
-        parse_lnv_entry, parse_platform_data, BoundaryInfo, CameraData, CameraWaypointData, Lnv,
-        LnvEntry, PlatformData,
+        parse_lnv_entry, parse_platform_data, parse_platform_waypoint_data, BoundaryInfo,
+        CameraData, CameraWaypointData, Lnv, LnvEntry, PlatformData, PlatformWaypointData,
     },
 };
 
@@ -220,6 +220,68 @@ fn test_platform_data() {
             PlatformData {
                 traveling_audio_guid: None,
                 time_based_movement: Some(Bool { bool: 0x01 })
+            }
+        ))
+    );
+}
+
+#[test]
+fn test_platform_waypoint_data() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend(&33.3_f32.to_le_bytes());
+    bytes.extend(&0.5_f32.to_le_bytes());
+    bytes.extend(&100_f32.to_le_bytes());
+    bytes.extend(&7_f32.to_le_bytes());
+
+    bytes.push(0x01);
+    bytes.extend(&0.25_f32.to_le_bytes());
+    bytes.extend(&0.75_f32.to_le_bytes());
+
+    assert_eq!(
+        parse_platform_waypoint_data(12)(&bytes),
+        Ok((
+            EMPTY,
+            PlatformWaypointData {
+                rotation: QuaternionWxyz {
+                    w: 33.3,
+                    x: 0.5,
+                    y: 100.0,
+                    z: 7.0
+                },
+                lock_player: Bool { bool: 0x01 },
+                speed: 0.25,
+                wait: 0.75,
+                depart_audio_guid: None,
+                arrive_audio_guid: None
+            }
+        ))
+    );
+
+    bytes.extend(&[0x03, b'A', 0, b'B', 0, b'C', 0]);
+    bytes.extend(&[0x03, b'X', 0, b'Y', 0, b'Z', 0]);
+
+    assert_eq!(
+        parse_platform_waypoint_data(13)(&bytes),
+        Ok((
+            EMPTY,
+            PlatformWaypointData {
+                rotation: QuaternionWxyz {
+                    w: 33.3,
+                    x: 0.5,
+                    y: 100.0,
+                    z: 7.0
+                },
+                lock_player: Bool { bool: 0x01 },
+                speed: 0.25,
+                wait: 0.75,
+                depart_audio_guid: Some(U1Wstr {
+                    length: 3,
+                    str: b"A\0B\0C\0"
+                }),
+                arrive_audio_guid: Some(U1Wstr {
+                    length: 3,
+                    str: b"X\0Y\0Z\0"
+                })
             }
         ))
     );
