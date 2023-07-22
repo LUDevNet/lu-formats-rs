@@ -9,14 +9,15 @@ use ctx::NamingContext;
 use heck::ToUpperCamelCase;
 use kaitai_expr::{parse_expr, Expr, Op};
 use kaitai_struct_types::{
-    AnyScalar, Attribute, Contents, EndianSpec, IntTypeRef, KsySchema, Repeat, StringOrArray,
-    TypeRef, WellKnownTypeRef,
+    AnyScalar, Attribute, Contents, IntTypeRef, KsySchema, Repeat, StringOrArray, TypeRef,
+    WellKnownTypeRef,
 };
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use r#type::{Field, FieldGenerics, ResolvedType, Type};
 
 mod ctx;
+mod parser;
 mod r#type;
 
 pub struct Module {
@@ -93,85 +94,79 @@ fn codegen_type_ref(
             switch_on: _,
             cases,
         } => {
-            if let Some(gen) = field_generics {
-                let g = &gen.type_;
-                let t = &gen.trait_;
-                let v = &gen.var_enum;
-                if gen.external {
-                    tc.generics.push(quote!(#g: #t));
-                    tc.generics_use.push(quote!(#g));
-                }
-                let trait_doc = format!("Marker trait for [`{enclosing_type}::{discriminant}`]");
-                let var_enum_doc =
-                    format!("Raw variants for [`{}::{}`]", enclosing_type, discriminant);
-                let mut enum_cases: Vec<TokenStream> =
-                    Vec::<TokenStream>::with_capacity(cases.len());
-                let mut trait_impl_cases = Vec::<TokenStream>::with_capacity(cases.len());
-                for (case_key, case_type) in cases.iter() {
-                    let mut _enum_set = BTreeSet::<String>::new();
-                    let name: String = match case_key {
-                        AnyScalar::Null => todo!(),
-                        AnyScalar::Bool(true) => "True".to_owned(),
-                        AnyScalar::Bool(false) => "False".to_owned(),
-                        AnyScalar::String(s) => if let Some((_enum, part)) = s.split_once("::") {
-                            _enum_set.insert(_enum.to_owned());
-                            part
-                        } else {
-                            s
-                        }
-                        .to_upper_camel_case(),
-                        AnyScalar::UInt(i) => format!("N{}", i),
-                    };
-                    let n: Ident = format_ident!("{}", name);
-                    let inner =
-                        codegen_type_ref(case_type, nc, tc, &v.to_string(), &name, field_generics);
-                    enum_cases.push(quote! {
-                        #n(#inner),
-                    });
-                    let need_lifetime = nc.need_lifetime(case_type);
-                    let l = match need_lifetime {
-                        true => quote!(<'a>),
-                        false => quote!(),
-                    };
-
-                    trait_impl_cases.push(quote!(
-                        impl #l #t for #inner {}
-                    ));
-                }
-
-                // variant enum generics
-                let var_enum_gen = match gen.need_lifetime {
-                    false => quote!(),
+            let gen = field_generics.unwrap();
+            let g = &gen.type_;
+            let t = &gen.trait_;
+            let v = &gen.var_enum;
+            if gen.external {
+                tc.generics.push(quote!(#g: #t));
+                tc.generics_use.push(quote!(#g));
+            }
+            let trait_doc = format!("Marker trait for [`{enclosing_type}::{discriminant}`]");
+            let var_enum_doc = format!("Raw variants for [`{}::{}`]", enclosing_type, discriminant);
+            let mut enum_cases: Vec<TokenStream> = Vec::<TokenStream>::with_capacity(cases.len());
+            let mut trait_impl_cases = Vec::<TokenStream>::with_capacity(cases.len());
+            for (case_key, case_type) in cases.iter() {
+                let mut _enum_set = BTreeSet::<String>::new();
+                let name: String = match case_key {
+                    AnyScalar::Null => todo!(),
+                    AnyScalar::Bool(true) => "True".to_owned(),
+                    AnyScalar::Bool(false) => "False".to_owned(),
+                    AnyScalar::String(s) => if let Some((_enum, part)) = s.split_once("::") {
+                        _enum_set.insert(_enum.to_owned());
+                        part
+                    } else {
+                        s
+                    }
+                    .to_upper_camel_case(),
+                    AnyScalar::UInt(i) => format!("N{}", i),
+                };
+                let n: Ident = format_ident!("{}", name);
+                let inner =
+                    codegen_type_ref(case_type, nc, tc, &v.to_string(), &name, field_generics);
+                enum_cases.push(quote! {
+                    #n(#inner),
+                });
+                let need_lifetime = nc.need_lifetime(case_type);
+                let l = match need_lifetime {
                     true => quote!(<'a>),
+                    false => quote!(),
                 };
 
-                tc.traits.push(quote! {
-                    #[doc = #trait_doc]
-                    pub trait #t {
-                        // TODO
-                    }
+                trait_impl_cases.push(quote!(
+                    impl #l #t for #inner {}
+                ));
+            }
 
-                    #[doc = #var_enum_doc]
-                    #[derive(Debug, Clone, PartialEq)]
-                    pub enum #v #var_enum_gen {
-                        #(#enum_cases)*
-                    }
+            // variant enum generics
+            let var_enum_gen = match gen.need_lifetime {
+                false => quote!(),
+                true => quote!(<'a>),
+            };
 
-                    // FIXME: remove
-                    impl #t for () {}
-
-                    impl #var_enum_gen #t for #v #var_enum_gen {}
-
-                    #(#trait_impl_cases)*
-                });
-                if gen.external {
-                    quote!(#g)
-                } else {
-                    quote!(#v #var_enum_gen)
+            tc.traits.push(quote! {
+                #[doc = #trait_doc]
+                pub trait #t {
+                    // TODO
                 }
+
+                #[doc = #var_enum_doc]
+                #[derive(Debug, Clone, PartialEq)]
+                pub enum #v #var_enum_gen {
+                    #(#enum_cases)*
+                }
+
+                // FIXME: remove
+                impl #t for () {}
+
+                impl #var_enum_gen #t for #v #var_enum_gen {}
+
+                #(#trait_impl_cases)*
+            });
+            if gen.external {
+                quote!(#g)
             } else {
-                // Codegen typeref missing field generics
-                quote!((usize,))
+                quote!(#v #var_enum_gen)
             }
         }
     }
@@ -225,92 +220,10 @@ fn codegen_attr_parse(
     let f_ident = field.ident();
     let mut parser = if let Some(ty) = &attr.ty {
         match ty {
-            TypeRef::WellKnown(w) => match w {
-                WellKnownTypeRef::Unsigned(u) => match u {
-                    IntTypeRef::Int1 => quote!(::nom::number::complete::u8),
-                    IntTypeRef::Int2(e) => match e {
-                        EndianSpec::Implicit => quote!(::nom::number::complete::u16(#p_endian)),
-                        EndianSpec::Little => quote!(::nom::number::complete::le_u16),
-                        EndianSpec::Big => quote!(::nom::number::complete::be_u16),
-                    },
-                    IntTypeRef::Int4(e) => match e {
-                        EndianSpec::Implicit => quote!(::nom::number::complete::u32(#p_endian)),
-                        EndianSpec::Little => quote!(::nom::number::complete::le_u32),
-                        EndianSpec::Big => quote!(::nom::number::complete::be_u32),
-                    },
-                    IntTypeRef::Int8(e) => match e {
-                        EndianSpec::Implicit => quote!(::nom::number::complete::u64(#p_endian)),
-                        EndianSpec::Little => quote!(::nom::number::complete::le_u64),
-                        EndianSpec::Big => quote!(::nom::number::complete::be_u64),
-                    },
-                },
-                WellKnownTypeRef::Signed(i) => match i {
-                    IntTypeRef::Int1 => quote!(::nom::number::complete::i8(#p_endian)),
-                    IntTypeRef::Int2(e) => match e {
-                        EndianSpec::Implicit => quote!(::nom::number::complete::i16(#p_endian)),
-                        EndianSpec::Little => quote!(::nom::number::complete::le_i16),
-                        EndianSpec::Big => quote!(::nom::number::complete::be_i16),
-                    },
-                    IntTypeRef::Int4(e) => match e {
-                        EndianSpec::Implicit => quote!(::nom::number::complete::i32(#p_endian)),
-                        EndianSpec::Little => quote!(::nom::number::complete::le_i32),
-                        EndianSpec::Big => quote!(::nom::number::complete::be_i32),
-                    },
-                    IntTypeRef::Int8(e) => match e {
-                        EndianSpec::Implicit => quote!(::nom::number::complete::i64(#p_endian)),
-                        EndianSpec::Little => quote!(::nom::number::complete::le_i64),
-                        EndianSpec::Big => quote!(::nom::number::complete::be_i64),
-                    },
-                },
-                WellKnownTypeRef::F4(e) => match e {
-                    EndianSpec::Implicit => quote!(::nom::number::complete::f32(#p_endian)),
-                    EndianSpec::Little => quote!(::nom::number::complete::le_f32),
-                    EndianSpec::Big => quote!(::nom::number::complete::be_f32),
-                },
-                WellKnownTypeRef::F8(e) => match e {
-                    EndianSpec::Implicit => quote!(::nom::number::complete::f64(#p_endian)),
-                    EndianSpec::Little => quote!(::nom::number::complete::le_f64),
-                    EndianSpec::Big => quote!(::nom::number::complete::be_f64),
-                },
-                WellKnownTypeRef::Str => quote!(::nom::bytes::complete::take_until(
-                    ::std::slice::from_ref(&0)
-                )), // FIXME?
-                WellKnownTypeRef::StrZ => quote!(::nom::bytes::complete::take_until(
-                    ::std::slice::from_ref(&0)
-                )),
-            },
+            TypeRef::WellKnown(w) => parser::wk_parser(w, p_endian),
             TypeRef::Named(n) => {
                 let _named_ty = nc.resolve(n).unwrap();
-                let p = &_named_ty.parser_name;
-                let path = if let Some(m) = &_named_ty.source_mod {
-                    quote!(#m::#p)
-                } else {
-                    quote!(#p)
-                };
-                if _named_ty.root_obligations.is_empty()
-                    && !_named_ty.field_generics.values().any(|f| f.external)
-                {
-                    path
-                } else {
-                    fn _root_field(i: Ident) -> TokenStream {
-                        quote!(_root.#i)
-                    }
-                    let mut values: Vec<_> = _named_ty
-                        .root_obligations
-                        .fields()
-                        .map(|f| format_ident!("{}", f))
-                        .map(match self_ty.is_root {
-                            true => Ident::into_token_stream,
-                            false => _root_field,
-                        })
-                        .collect();
-                    for generics in _named_ty.field_generics.values() {
-                        if generics.external {
-                            values.push(quote!(|_| todo!()))
-                        }
-                    }
-                    quote!(#path(#(#values),*))
-                }
+                parser::user_type(_named_ty, self_ty.is_root)
             }
             TypeRef::Dynamic {
                 switch_on: _,
