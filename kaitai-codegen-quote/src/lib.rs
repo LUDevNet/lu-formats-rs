@@ -154,6 +154,7 @@ fn codegen_type_ref(
 
                 #[doc = #var_enum_doc]
                 #[derive(Debug, Clone, PartialEq)]
+                #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
                 pub enum #v #var_enum_gen {
                     #(#enum_cases)*
                 }
@@ -543,6 +544,7 @@ impl Context<'_> {
             #doc_maybe_parents
             #doc_depends_on
             #doc_may_depend_on
+            #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
             #[derive(Debug, Clone, PartialEq)]
             pub struct #id #gen {
                 #(#attrs),*
