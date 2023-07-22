@@ -3,8 +3,8 @@ use crate::{
     files::luz::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
         parse_lnv_entry, parse_platform_data, parse_platform_waypoint_data, parse_property_data,
-        BoundaryInfo, CameraData, CameraWaypointData, Lnv, LnvEntry, PlatformData,
-        PlatformWaypointData, PropertyData,
+        parse_racing_waypoint_data, BoundaryInfo, CameraData, CameraWaypointData, Lnv, LnvEntry,
+        PlatformData, PlatformWaypointData, PropertyData, RacingWaypointData,
     },
 };
 
@@ -448,4 +448,37 @@ fn test_property_data() {
             }
         ))
     );
+}
+
+#[test]
+fn test_racing_waypoint_data() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend(&0f32.to_le_bytes());
+    bytes.extend(&1f32.to_le_bytes());
+    bytes.extend(&1f32.to_le_bytes());
+    bytes.extend(&1f32.to_le_bytes());
+    bytes.extend(&[0x01, 0x00]);
+    bytes.extend(&0.4_f32.to_le_bytes());
+    bytes.extend(&0.5_f32.to_le_bytes());
+    bytes.extend(&0.6_f32.to_le_bytes());
+
+    assert_eq!(
+        parse_racing_waypoint_data(&bytes),
+        Ok((
+            EMPTY,
+            RacingWaypointData {
+                rotation: QuaternionWxyz {
+                    w: 0.0,
+                    x: 1.0,
+                    y: 1.0,
+                    z: 1.0
+                },
+                is_reset_node: Bool { bool: 0x01 },
+                is_non_horizontal_camera: Bool { bool: 0x00 },
+                plane_width: 0.4,
+                plane_height: 0.5,
+                shortest_distance_to_end: 0.6
+            }
+        ))
+    )
 }
