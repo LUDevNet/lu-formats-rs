@@ -412,6 +412,7 @@ impl Context<'_> {
             .map(|f| format_ident!("{}", f))
             .collect();
 
+        let mut parser_args = Vec::<TokenStream>::new();
         let _root = if !self_ty.root_obligations.is_empty() {
             Some(quote!(
                 struct _Root {
@@ -438,8 +439,10 @@ impl Context<'_> {
                     for fields in obligations.fields() {
                         let pp_field_ty = quote!(u32);
                         let pp_field_id = format_ident!("{}", fields);
-                        pp_fields.push(quote!(#pp_field_id: #pp_field_ty));
-                        pp_values.push(quote!(#pp_field_id: 0xBEEF));
+                        let pp_field = quote!(#pp_field_id: #pp_field_ty);
+                        parser_args.push(pp_field.clone());
+                        pp_fields.push(pp_field);
+                        pp_values.push(pp_field_id.to_token_stream());
                     }
                     prev.push(quote!(struct #pp_ident {
                         #(#pp_fields),*
@@ -451,10 +454,14 @@ impl Context<'_> {
                         }),
                     )
                 } else {
-                    (quote!(u32), quote!(0xBEEF))
+                    (quote!(u32), field_ident.to_token_stream())
                 };
+                let field_decl = quote!(#field_ident: #field_ty);
+                if field != "_parent" {
+                    parser_args.push(field_decl.clone());
+                }
                 parent_values.push(quote!(#field_ident: #field_val));
-                parent_fields.push(quote!(#field_ident: #field_ty));
+                parent_fields.push(field_decl);
             }
             assert_eq!(parent_fields.len(), parent_values.len());
             quote!(
@@ -506,6 +513,7 @@ impl Context<'_> {
                 #q_parser_attr
                 pub fn #parser_name<#input_lifetime #(#generics),*> (
                     #(#root_fields)*
+                    #(#parser_args),*
                     #(#_external_field_generics)*
                 ) -> impl FnMut(#_input_ty) -> #q_result {
                     #_root

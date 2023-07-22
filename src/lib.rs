@@ -149,7 +149,7 @@ mod tests {
     fn test_camera_data() {
         let bytes = vec![0x03, b'A', 0x00, b'B', 0x00, b'C', 0x00, 0x01];
         assert_eq!(
-            parse_camera_data()(&bytes),
+            parse_camera_data(14)(&bytes),
             Ok((
                 EMPTY,
                 CameraData {
@@ -158,6 +158,19 @@ mod tests {
                         str: &[b'A', 0x00, b'B', 0x00, b'C', 0x00]
                     },
                     rotate_player: Some(Bool { bool: 0x01 })
+                }
+            ))
+        );
+        assert_eq!(
+            parse_camera_data(13)(&bytes),
+            Ok((
+                &[0x01][..],
+                CameraData {
+                    next_path: U1Wstr {
+                        length: 3,
+                        str: &[b'A', 0x00, b'B', 0x00, b'C', 0x00]
+                    },
+                    rotate_player: None
                 }
             ))
         );
