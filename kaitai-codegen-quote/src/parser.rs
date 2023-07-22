@@ -2,14 +2,15 @@
 //!
 //! This module is used to generate code for a parser based on [nom v7.x](https://docs.rs/nom/7)
 
+use kaitai_expr::{parse_expr, Expr, Op};
 use kaitai_struct_types::{EndianSpec, IntTypeRef, WellKnownTypeRef};
-use proc_macro2::{Ident, TokenStream};
+use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 
 use crate::r#type::Type;
 
 /// Generate the parser expression for a well-known type
-pub fn wk_parser(w: &WellKnownTypeRef, p_endian: &Ident) -> TokenStream {
+pub fn wk_parser(w: &WellKnownTypeRef, size: Option<&str>, p_endian: &Ident) -> TokenStream {
     match w {
         WellKnownTypeRef::Unsigned(u) => match u {
             IntTypeRef::Int1 => quote!(::nom::number::complete::u8),
@@ -57,9 +58,14 @@ pub fn wk_parser(w: &WellKnownTypeRef, p_endian: &Ident) -> TokenStream {
             EndianSpec::Little => quote!(::nom::number::complete::le_f64),
             EndianSpec::Big => quote!(::nom::number::complete::be_f64),
         },
-        WellKnownTypeRef::Str => quote!(::nom::bytes::complete::take_until(
-            ::std::slice::from_ref(&0)
-        )), // FIXME?
+        WellKnownTypeRef::Str => {
+            if let Some(size_expr) = size {
+                let expr = codegen_expr_str(size_expr);
+                quote!(::nom::bytes::complete::take(#expr))
+            } else {
+                quote!(::nom::bytes::complete::take(0x70D0 as usize))
+            }
+        } // FIXME?
         WellKnownTypeRef::StrZ => quote!(::nom::bytes::complete::take_until(
             ::std::slice::from_ref(&0)
         )),
@@ -98,4 +104,45 @@ pub fn user_type(named_ty: &Type, is_root_parser: bool) -> TokenStream {
     } else {
         quote!(#path(#(#values),*))
     }
+}
+
+fn codegen_expr(_expr: &Expr) -> TokenStream {
+    match _expr {
+        Expr::Input(i, fields) => match *i {
+            "_parent" => quote!(0xBEEF),
+            _ => {
+                let mut ts = format_ident!("{}", i).into_token_stream();
+                for field in fields {
+                    let f = format_ident!("{}", field);
+                    ts = quote!(#ts.#f);
+                }
+                ts
+            }
+        },
+        Expr::Number(u) => Literal::u64_unsuffixed(*u).into_token_stream(),
+        Expr::BinOp { op, args } => {
+            let lhs = codegen_expr(&args.0);
+            let rhs = codegen_expr(&args.1);
+            match op {
+                Op::Mul => quote!((#lhs * #rhs)),
+                Op::Div => quote!((#lhs / #rhs)),
+                Op::Sub => quote!((#lhs - #rhs)),
+                Op::Add => quote!((#lhs + #rhs)),
+                Op::Dot => quote!((#lhs).#rhs),
+                Op::GtEq => quote!((#lhs >= #rhs)),
+                Op::Gt => quote!((#lhs > #rhs)),
+                Op::LtEq => quote!((#lhs <= #rhs)),
+                Op::Lt => quote!((#lhs < #rhs)),
+                Op::Eq => quote!((#lhs == #rhs)),
+                Op::And => quote!((#lhs && #rhs)),
+                Op::Or => quote!((#lhs || #rhs)),
+                Op::LParen | Op::RParen | Op::TernaryTrue | Op::TernaryFalse => quote!(0xBEEF),
+            }
+        }
+    }
+}
+
+pub fn codegen_expr_str(expr: &str) -> TokenStream {
+    let parsed_expr = parse_expr(expr).expect(expr);
+    codegen_expr(&parsed_expr)
 }

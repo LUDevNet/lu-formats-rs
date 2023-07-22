@@ -168,7 +168,7 @@ pub struct Attribute {
 
     /// The size of this attribute (if present, creates a substream)
     #[serde(default)]
-    pub size: Option<AnyScalar>,
+    pub size: Option<String>,
 
     /// The size of this attribute (if present, creates a substream)
     #[serde(default, rename = "if")]

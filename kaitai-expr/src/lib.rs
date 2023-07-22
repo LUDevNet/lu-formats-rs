@@ -16,6 +16,11 @@ pub enum Expr<'a> {
 pub enum Op {
     Dot,
 
+    Mul,
+    Div,
+    Sub,
+    Add,
+
     GtEq,
     Gt,
     LtEq,
@@ -240,6 +245,22 @@ impl<'a> Iterator for Lexer<'a> {
                 Some(':') => {
                     self.rest = chars.as_str();
                     break Some(Token::BinOp(Op::TernaryFalse));
+                }
+                Some('*') => {
+                    self.rest = chars.as_str();
+                    break Some(Token::BinOp(Op::Mul));
+                }
+                Some('/') => {
+                    self.rest = chars.as_str();
+                    break Some(Token::BinOp(Op::Div));
+                }
+                Some('-') => {
+                    self.rest = chars.as_str();
+                    break Some(Token::BinOp(Op::Sub));
+                }
+                Some('+') => {
+                    self.rest = chars.as_str();
+                    break Some(Token::BinOp(Op::Add));
                 }
                 Some('0'..='9') => {
                     break Some(Token::Number(

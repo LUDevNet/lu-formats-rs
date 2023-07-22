@@ -191,6 +191,10 @@ fn codegen_expr(_expr: &Expr) -> TokenStream {
             let lhs = codegen_expr(&args.0);
             let rhs = codegen_expr(&args.1);
             match op {
+                Op::Mul => quote!((#lhs * #rhs)),
+                Op::Div => quote!((#lhs / #rhs)),
+                Op::Sub => quote!((#lhs - #rhs)),
+                Op::Add => quote!((#lhs + #rhs)),
                 Op::Dot => quote!((#lhs).#rhs),
                 Op::GtEq => quote!((#lhs >= #rhs)),
                 Op::Gt => quote!((#lhs > #rhs)),
@@ -221,7 +225,7 @@ fn codegen_attr_parse(
     let f_ident = field.ident();
     let mut parser = if let Some(ty) = &attr.ty {
         match ty {
-            TypeRef::WellKnown(w) => parser::wk_parser(w, p_endian),
+            TypeRef::WellKnown(w) => parser::wk_parser(w, attr.size.as_deref(), p_endian),
             TypeRef::Named(n) => {
                 let _named_ty = nc.resolve(n).unwrap();
                 parser::user_type(_named_ty, self_ty.is_root)
