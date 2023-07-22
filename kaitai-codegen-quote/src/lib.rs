@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt::Write as FmtWrite,
     io::{self, BufWriter, Write},
     path::{Path, PathBuf},
     process::Command,
@@ -279,6 +280,32 @@ fn codegen_attr_parse(
     quote!(let (#p_input, #f_ident) = #parser(#p_input)?;)
 }
 
+fn doc_type_seq<S: AsRef<str>, I: IntoIterator<Item = S>>(
+    nc: &NamingContext,
+    key: &str,
+    iterable: I,
+) -> TokenStream {
+    let mut text = format!("## {}\n", key);
+    for name in iterable.into_iter() {
+        let named = nc.resolve(name.as_ref()).unwrap();
+        if let Some(m) = &named.source_mod {
+            writeln!(text, "- [`{}::{}`]", m, named.ident)
+        } else {
+            writeln!(text, "- [`{}`]", named.ident)
+        }
+        .unwrap();
+    }
+    quote!(#[doc = #text])
+}
+
+fn doc_type_list(nc: &NamingContext, key: &str, list: &[String]) -> Option<TokenStream> {
+    (!list.is_empty()).then(|| doc_type_seq(nc, key, list))
+}
+
+fn doc_type_set(nc: &NamingContext, key: &str, set: &BTreeSet<String>) -> Option<TokenStream> {
+    (!set.is_empty()).then(|| doc_type_seq(nc, key, set))
+}
+
 impl Context<'_> {
     fn codegen_attr(
         &self,
@@ -353,17 +380,15 @@ impl Context<'_> {
         seq: &[Attribute],
         self_ty: &Type,
     ) -> io::Result<TokenStream> {
-        //let self_ty = nc.resolve(name);
         let rust_struct_name = name.to_upper_camel_case();
         let id = format_ident!("{}", rust_struct_name);
         let doc = doc.unwrap_or("");
-        let doc_root_obligations = format!("```ron\n_root: {:#?}\n```", self_ty.root_obligations);
-        let doc_parent_obligations =
-            format!("```ron\n_parent: {:#?}\n```", self_ty.parent_obligations);
-        let doc_parents = format!("```txt\nparents: {:?}\n```", self_ty.parents);
-        let doc_maybe_parents = format!("```txt\nmaybe_parents: {:?}\n```", self_ty.maybe_parents);
-        let doc_depends_on = format!("```txt\ndepends_on: {:?}\n```", self_ty.depends_on);
-        let doc_may_depend_on = format!("```txt\nmay_depend_on: {:?}\n```", self_ty.may_depend_on);
+        let doc_root_obligations = self_ty.root_obligations.doc("_root");
+        let doc_parent_obligations = self_ty.parent_obligations.doc("_parent");
+        let doc_parents = doc_type_list(nc, "parents", &self_ty.parents);
+        let doc_maybe_parents = doc_type_list(nc, "maybe_parents", &self_ty.maybe_parents);
+        let doc_depends_on = doc_type_set(nc, "depends_on", &self_ty.depends_on);
+        let doc_may_depend_on = doc_type_set(nc, "may_depend_on", &self_ty.may_depend_on);
         let doc_refs = doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
         let needs_lifetime = self_ty.needs_lifetime;
 
@@ -490,12 +515,12 @@ impl Context<'_> {
         let q = quote! {
             #[doc = #doc]
             #(#[doc = #doc_refs])*
-            #[doc = #doc_root_obligations]
-            #[doc = #doc_parent_obligations]
-            #[doc = #doc_parents]
-            #[doc = #doc_maybe_parents]
-            #[doc = #doc_depends_on]
-            #[doc = #doc_may_depend_on]
+            #doc_root_obligations
+            #doc_parent_obligations
+            #doc_parents
+            #doc_maybe_parents
+            #doc_depends_on
+            #doc_may_depend_on
             #[derive(Debug, Clone, PartialEq)]
             pub struct #id #gen {
                 #(#attrs),*

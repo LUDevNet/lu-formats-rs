@@ -48,6 +48,13 @@ impl ObligationTree {
         Self::default()
     }
 
+    pub fn doc(&self, key: &str) -> Option<TokenStream> {
+        (!self.0.is_empty()).then(|| {
+            let text = format!("```ron\n{}: {:#?}\n```", key, &self.0);
+            quote!(#[doc = #text])
+        })
+    }
+
     pub fn union(&mut self, other: &ObligationTree) {
         for (key, value) in &other.0 {
             self.0.entry(key.clone()).or_default().union(value);
