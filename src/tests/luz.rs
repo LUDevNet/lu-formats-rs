@@ -3,8 +3,9 @@ use crate::{
     files::luz::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
         parse_lnv_entry, parse_platform_data, parse_platform_waypoint_data, parse_property_data,
-        parse_racing_waypoint_data, BoundaryInfo, CameraData, CameraWaypointData, Lnv, LnvEntry,
-        PlatformData, PlatformWaypointData, PropertyData, RacingWaypointData,
+        parse_racing_waypoint_data, parse_rail_waypoint_data, BoundaryInfo, CameraData,
+        CameraWaypointData, Lnv, LnvEntry, PlatformData, PlatformWaypointData, PropertyData,
+        RacingWaypointData, RailWaypointData,
     },
 };
 
@@ -481,4 +482,62 @@ fn test_racing_waypoint_data() {
             }
         ))
     )
+}
+
+#[test]
+fn test_rail_waypoint_data() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend_from_slice(&1.0f32.to_le_bytes());
+    bytes.extend_from_slice(&1.1f32.to_le_bytes());
+    bytes.extend_from_slice(&1.2f32.to_le_bytes());
+    bytes.extend_from_slice(&1.3f32.to_le_bytes());
+    bytes.extend(&0u32.to_le_bytes());
+
+    assert_eq!(
+        parse_rail_waypoint_data(16)(&bytes),
+        Ok((
+            EMPTY,
+            RailWaypointData {
+                rotation: QuaternionWxyz {
+                    w: 1.0,
+                    x: 1.1,
+                    y: 1.2,
+                    z: 1.3
+                },
+                speed: None,
+                config: Lnv {
+                    num_entries: 0,
+                    entries: vec![]
+                }
+            }
+        ))
+    );
+
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend_from_slice(&1.0f32.to_le_bytes());
+    bytes.extend_from_slice(&1.1f32.to_le_bytes());
+    bytes.extend_from_slice(&1.2f32.to_le_bytes());
+    bytes.extend_from_slice(&1.3f32.to_le_bytes());
+    bytes.extend_from_slice(&5.0f32.to_le_bytes());
+    bytes.extend(&0u32.to_le_bytes());
+
+    assert_eq!(
+        parse_rail_waypoint_data(17)(&bytes),
+        Ok((
+            EMPTY,
+            RailWaypointData {
+                rotation: QuaternionWxyz {
+                    w: 1.0,
+                    x: 1.1,
+                    y: 1.2,
+                    z: 1.3
+                },
+                speed: Some(5.0),
+                config: Lnv {
+                    num_entries: 0,
+                    entries: vec![]
+                }
+            }
+        ))
+    );
 }
