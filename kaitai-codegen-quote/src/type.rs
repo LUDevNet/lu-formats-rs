@@ -128,6 +128,11 @@ impl Type {
             Expr::Input("_root", fields) => self.root_obligations.add(fields),
             Expr::Input("_parent", fields) => self.parent_obligations.add(fields),
             Expr::Input(_, _) | Expr::Number(_) => {}
+            Expr::If(args) => {
+                self.check_obligations(&args.0);
+                self.check_obligations(&args.1);
+                self.check_obligations(&args.2);
+            }
             Expr::BinOp { op: _, args } => {
                 self.check_obligations(&args.0);
                 self.check_obligations(&args.1);

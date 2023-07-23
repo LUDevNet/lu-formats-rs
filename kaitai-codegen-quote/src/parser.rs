@@ -116,6 +116,12 @@ fn codegen_expr(_expr: &Expr) -> TokenStream {
             }
             ts
         }
+        Expr::If(args) => {
+            let cond = codegen_expr(&args.0);
+            let then_case = codegen_expr(&args.1);
+            let else_case = codegen_expr(&args.2);
+            quote!(match #cond { true => #then_case, false => #else_case })
+        }
         Expr::Number(u) => Literal::u64_unsuffixed(*u).into_token_stream(),
         Expr::BinOp { op, args } => {
             let lhs = codegen_expr(&args.0);

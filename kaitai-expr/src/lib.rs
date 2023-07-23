@@ -10,6 +10,7 @@ pub enum Expr<'a> {
         op: Op,
         args: Box<(Expr<'a>, Expr<'a>)>,
     },
+    If(Box<(Expr<'a>, Expr<'a>, Expr<'a>)>),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -98,6 +99,11 @@ impl<'a> ExprVM<'a> {
                         vl.push(r);
                         vl.append(&mut vr);
                         Expr::Input(l, vl)
+                    }
+                    (Expr::BinOp { op, args }, else_case) if op == Op::TernaryTrue => {
+                        let cond = args.0;
+                        let then_case = args.1;
+                        Expr::If(Box::new((cond, then_case, else_case)))
                     }
                     args => Expr::BinOp {
                         op,
