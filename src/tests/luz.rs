@@ -1,11 +1,11 @@
 use crate::{
-    common::{Bool, QuaternionWxyz, U1Wstr, U4Wstr},
+    common::{Bool, Lot, QuaternionWxyz, U1Wstr, U4Wstr},
     files::luz::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
         parse_lnv_entry, parse_platform_data, parse_platform_waypoint_data, parse_property_data,
-        parse_racing_waypoint_data, parse_rail_waypoint_data, BoundaryInfo, CameraData,
-        CameraWaypointData, Lnv, LnvEntry, PlatformData, PlatformWaypointData, PropertyData,
-        RacingWaypointData, RailWaypointData,
+        parse_racing_waypoint_data, parse_rail_waypoint_data, parse_spawner_data, BoundaryInfo,
+        CameraData, CameraWaypointData, Lnv, LnvEntry, PlatformData, PlatformWaypointData,
+        PropertyData, RacingWaypointData, RailWaypointData, SpawnerData,
     },
 };
 
@@ -537,6 +537,52 @@ fn test_rail_waypoint_data() {
                     num_entries: 0,
                     entries: vec![]
                 }
+            }
+        ))
+    );
+}
+
+#[test]
+fn test_spawner_data() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend_from_slice(&1232u32.to_le_bytes());
+    bytes.extend_from_slice(&3600u32.to_le_bytes());
+    bytes.extend_from_slice(&5u32.to_le_bytes());
+    bytes.extend_from_slice(&3u32.to_le_bytes());
+    bytes.extend_from_slice(&700000000u64.to_le_bytes());
+
+    assert_eq!(
+        parse_spawner_data(8)(&bytes),
+        Ok((
+            EMPTY,
+            SpawnerData {
+                spawned_lot: Lot { lot: 1232 },
+                respawn_time: 3600,
+                max_to_spawn: 5,
+                num_to_maintain: 3,
+                object_id: crate::common::ObjectId {
+                    object_id: 700000000
+                },
+                activate_on_load: None
+            }
+        ))
+    );
+
+    bytes.push(0x00);
+
+    assert_eq!(
+        parse_spawner_data(9)(&bytes),
+        Ok((
+            EMPTY,
+            SpawnerData {
+                spawned_lot: Lot { lot: 1232 },
+                respawn_time: 3600,
+                max_to_spawn: 5,
+                num_to_maintain: 3,
+                object_id: crate::common::ObjectId {
+                    object_id: 700000000
+                },
+                activate_on_load: Some(Bool { bool: 0x00 })
             }
         ))
     );
