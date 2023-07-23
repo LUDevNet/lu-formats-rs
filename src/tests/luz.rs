@@ -4,9 +4,9 @@ use crate::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
         parse_lnv_entry, parse_platform_data, parse_platform_waypoint_data, parse_property_data,
         parse_racing_waypoint_data, parse_rail_waypoint_data, parse_spawner_data,
-        parse_spawner_waypoint_data, BoundaryInfo, CameraData, CameraWaypointData, Lnv, LnvEntry,
-        PlatformData, PlatformWaypointData, PropertyData, RacingWaypointData, RailWaypointData,
-        SpawnerData, SpawnerWaypointData,
+        parse_spawner_waypoint_data, parse_transition_point, BoundaryInfo, CameraData,
+        CameraWaypointData, Lnv, LnvEntry, PlatformData, PlatformWaypointData, PropertyData,
+        RacingWaypointData, RailWaypointData, SpawnerData, SpawnerWaypointData, TransitionPoint,
     },
 };
 
@@ -612,6 +612,32 @@ fn test_spawner_waypoint_data() {
                 config: Lnv {
                     num_entries: 0,
                     entries: vec![]
+                }
+            }
+        ))
+    );
+}
+
+#[test]
+fn test_transition_point() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend_from_slice(&10u32.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&1.0f32.to_le_bytes());
+    bytes.extend_from_slice(&2.0f32.to_le_bytes());
+    bytes.extend_from_slice(&4.0f32.to_le_bytes());
+
+    assert_eq!(
+        parse_transition_point(&bytes),
+        Ok((
+            EMPTY,
+            TransitionPoint {
+                scene_id: 10,
+                layer_id: 1,
+                transition_point: Vector3 {
+                    x: 1.0,
+                    y: 2.0,
+                    z: 4.0
                 }
             }
         ))
