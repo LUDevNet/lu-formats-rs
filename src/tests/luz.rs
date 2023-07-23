@@ -4,10 +4,10 @@ use crate::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
         parse_lnv_entry, parse_platform_data, parse_platform_waypoint_data, parse_property_data,
         parse_racing_waypoint_data, parse_rail_waypoint_data, parse_spawner_data,
-        parse_spawner_waypoint_data, parse_transition_info, parse_transition_point, BoundaryInfo,
-        CameraData, CameraWaypointData, Lnv, LnvEntry, PlatformData, PlatformWaypointData,
-        PropertyData, RacingWaypointData, RailWaypointData, SpawnerData, SpawnerWaypointData,
-        TransitionInfo, TransitionPoint,
+        parse_spawner_waypoint_data, parse_transition_info, parse_transition_point, parse_waypoint,
+        BoundaryInfo, CameraData, CameraWaypointData, Lnv, LnvEntry, PlatformData,
+        PlatformWaypointData, PropertyData, RacingWaypointData, RailWaypointData, SpawnerData,
+        SpawnerWaypointData, TransitionInfo, TransitionPoint, Waypoint,
     },
 };
 
@@ -484,6 +484,47 @@ fn test_racing_waypoint_data() {
             }
         ))
     )
+}
+
+#[test]
+fn test_rail_waypoint() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend_from_slice(&25f32.to_le_bytes());
+    bytes.extend_from_slice(&26f32.to_le_bytes());
+    bytes.extend_from_slice(&27f32.to_le_bytes());
+
+    bytes.extend_from_slice(&1.0f32.to_le_bytes());
+    bytes.extend_from_slice(&1.1f32.to_le_bytes());
+    bytes.extend_from_slice(&1.2f32.to_le_bytes());
+    bytes.extend_from_slice(&1.3f32.to_le_bytes());
+    bytes.extend(&0u32.to_le_bytes());
+
+    assert_eq!(
+        parse_waypoint(parse_rail_waypoint_data(16))(&bytes),
+        Ok((
+            EMPTY,
+            Waypoint::<RailWaypointData> {
+                position: Vector3 {
+                    x: 25.0,
+                    y: 26.0,
+                    z: 27.0
+                },
+                data: RailWaypointData {
+                    rotation: QuaternionWxyz {
+                        w: 1.0,
+                        x: 1.1,
+                        y: 1.2,
+                        z: 1.3
+                    },
+                    speed: None,
+                    config: Lnv {
+                        num_entries: 0,
+                        entries: vec![]
+                    }
+                }
+            }
+        ))
+    );
 }
 
 #[test]

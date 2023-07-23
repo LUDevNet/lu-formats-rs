@@ -523,7 +523,7 @@ impl Context<'_> {
                     #(#root_fields)*
                     #(#parser_args),*
                     #(#_external_field_generics)*
-                ) -> impl FnMut(#_input_ty) -> #q_result {
+                ) -> impl Fn(#_input_ty) -> #q_result {
                     #_root
                     #_parent
                     move |#p_input: #_input_ty| {
