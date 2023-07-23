@@ -3,9 +3,10 @@ use crate::{
     files::luz::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
         parse_lnv_entry, parse_platform_data, parse_platform_waypoint_data, parse_property_data,
-        parse_racing_waypoint_data, parse_rail_waypoint_data, parse_spawner_data, BoundaryInfo,
-        CameraData, CameraWaypointData, Lnv, LnvEntry, PlatformData, PlatformWaypointData,
-        PropertyData, RacingWaypointData, RailWaypointData, SpawnerData,
+        parse_racing_waypoint_data, parse_rail_waypoint_data, parse_spawner_data,
+        parse_spawner_waypoint_data, BoundaryInfo, CameraData, CameraWaypointData, Lnv, LnvEntry,
+        PlatformData, PlatformWaypointData, PropertyData, RacingWaypointData, RailWaypointData,
+        SpawnerData, SpawnerWaypointData,
     },
 };
 
@@ -583,6 +584,35 @@ fn test_spawner_data() {
                     object_id: 700000000
                 },
                 activate_on_load: Some(Bool { bool: 0x00 })
+            }
+        ))
+    );
+}
+
+#[test]
+fn test_spawner_waypoint_data() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend_from_slice(&1.0f32.to_le_bytes());
+    bytes.extend_from_slice(&2.0f32.to_le_bytes());
+    bytes.extend_from_slice(&4.0f32.to_le_bytes());
+    bytes.extend_from_slice(&8.0f32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+
+    assert_eq!(
+        parse_spawner_waypoint_data(&bytes),
+        Ok((
+            EMPTY,
+            SpawnerWaypointData {
+                rotation: QuaternionWxyz {
+                    w: 1.0,
+                    x: 2.0,
+                    y: 4.0,
+                    z: 8.0
+                },
+                config: Lnv {
+                    num_entries: 0,
+                    entries: vec![]
+                }
             }
         ))
     );
