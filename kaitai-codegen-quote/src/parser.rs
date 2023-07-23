@@ -3,11 +3,11 @@
 //! This module is used to generate code for a parser based on [nom v7.x](https://docs.rs/nom/7)
 
 use kaitai_expr::{parse_expr, Expr, Op};
-use kaitai_struct_types::{EndianSpec, IntTypeRef, WellKnownTypeRef};
+use kaitai_struct_types::{Attribute, Endian, EndianSpec, IntTypeRef, WellKnownTypeRef};
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 
-use crate::r#type::Type;
+use crate::{ctx::NamingContext, r#type::Type};
 
 /// Generate the parser expression for a well-known type
 pub fn wk_parser(w: &WellKnownTypeRef, size: Option<&str>, p_endian: &Ident) -> TokenStream {
@@ -148,4 +148,168 @@ fn codegen_expr(_expr: &Expr) -> TokenStream {
 pub fn codegen_expr_str(expr: &str) -> TokenStream {
     let parsed_expr = parse_expr(expr).expect(expr);
     codegen_expr(&parsed_expr)
+}
+
+pub(super) fn codegen_parser_fn(
+    self_ty: &Type,
+    seq: &[Attribute],
+    tc: &super::TyContext,
+    nc: &NamingContext,
+) -> TokenStream {
+    let mut parser = vec![];
+    let mut field_idents = Vec::<Ident>::with_capacity(seq.len());
+
+    let p_endian = format_ident!("_endian");
+    let p_input = format_ident!("_input");
+
+    for (i, attr) in seq.iter().enumerate() {
+        if attr.id.is_none() {
+            continue;
+        }
+
+        let field = &self_ty.fields[i];
+        field_idents.push(field.ident().clone());
+        parser.push(super::codegen_attr_parse(
+            field, self_ty, attr, &p_input, &p_endian, nc,
+        ));
+    }
+
+    let input_lifetime = match self_ty.needs_lifetime {
+        true => None,
+        false => Some(quote!('a,)),
+    };
+
+    let root_fields: Vec<_> = self_ty
+        .root_obligations
+        .fields()
+        .map(|f| {
+            let f_name = format_ident!("{}", f);
+            quote!(#f_name: u32,)
+        })
+        .collect();
+    let root_values: Vec<_> = self_ty
+        .root_obligations
+        .fields()
+        .map(|f| format_ident!("{}", f))
+        .collect();
+
+    let mut parser_args = Vec::<TokenStream>::new();
+    let _root = if !self_ty.root_obligations.is_empty() {
+        Some(quote!(
+            struct _Root {
+                #(#root_fields)*
+            }
+            let _root = _Root {
+                #(#root_values)*
+            };
+        ))
+    } else {
+        None
+    };
+    let _parent = (!self_ty.parent_obligations.is_empty()).then(|| {
+        let mut parent_values = Vec::<TokenStream>::new();
+        let mut parent_fields = Vec::<TokenStream>::new();
+        let mut prev = Vec::<TokenStream>::new();
+        for field in self_ty.parent_obligations.fields() {
+            let field_ident = format_ident!("{}", field);
+            let (field_ty, field_val) = if field == "_parent" {
+                let pp_ident = format_ident!("_ParentParent");
+                let mut pp_values = Vec::<TokenStream>::new();
+                let mut pp_fields = Vec::<TokenStream>::new();
+                let obligations = self_ty.parent_obligations.get("_parent").unwrap();
+                for fields in obligations.fields() {
+                    let pp_field_ty = quote!(u32);
+                    let pp_field_id = format_ident!("{}", fields);
+                    let pp_field = quote!(#pp_field_id: #pp_field_ty);
+                    parser_args.push(pp_field.clone());
+                    pp_fields.push(pp_field);
+                    pp_values.push(pp_field_id.to_token_stream());
+                }
+                prev.push(quote!(struct #pp_ident {
+                    #(#pp_fields),*
+                }));
+                (
+                    quote!(#pp_ident),
+                    quote!(#pp_ident {
+                        #(#pp_values),*
+                    }),
+                )
+            } else {
+                (quote!(u32), field_ident.to_token_stream())
+            };
+            let field_decl = quote!(#field_ident: #field_ty);
+            if field != "_parent" {
+                parser_args.push(field_decl.clone());
+            }
+            parent_values.push(quote!(#field_ident: #field_val));
+            parent_fields.push(field_decl);
+        }
+        assert_eq!(parent_fields.len(), parent_values.len());
+        quote!(
+            #(#prev)*
+            struct _Parent {
+                #(#parent_fields),*
+            }
+            let _parent = _Parent {
+                #(#parent_values),*
+            };
+        )
+    });
+
+    let _input_ty = quote!(&'a [u8]);
+    let _external_field_generics: Vec<_> = self_ty
+        .field_generics
+        .iter()
+        .filter(|f| f.1.external)
+        .map(|(_field, generics)| {
+            let p = &generics.parser;
+            let t = &generics.type_;
+            quote!(#p: impl Fn(&'a [u8]) -> ::nom::IResult<#_input_ty, #t>,)
+        })
+        .collect();
+
+    let v_endian = match self_ty.endian {
+        Endian::LittleEndian => quote!(::nom::number::Endianness::Little),
+        Endian::BigEndian => quote!(::nom::number::Endianness::Big),
+    };
+    let parser_name = &self_ty.parser_name;
+    let generics = &tc.generics[..];
+
+    let id = &self_ty.ident;
+    let q_parser_impl = quote!(
+        let #p_endian = #v_endian;
+        #(#parser)*
+        Ok((#p_input, #id {
+            #(#field_idents),*
+        }))
+    );
+    let q_parser_attr = quote!(
+        #[cfg(feature = "nom")]
+        #[allow(unused_parens)]
+    );
+    let gen_use = tc.gen_use();
+    let q_result = quote!(::nom::IResult<#_input_ty, #id #gen_use>);
+    if _root.is_some() || _parent.is_some() || !_external_field_generics.is_empty() {
+        quote!(
+            #q_parser_attr
+            pub fn #parser_name<#input_lifetime #(#generics),*> (
+                #(#root_fields)*
+                #(#parser_args),*
+                #(#_external_field_generics)*
+            ) -> impl Fn(#_input_ty) -> #q_result {
+                #_root
+                #_parent
+                move |#p_input: #_input_ty| {
+                    #q_parser_impl
+                }
+            }
+        )
+    } else {
+        quote!(
+            #q_parser_attr
+            pub fn #parser_name<#input_lifetime #(#generics),*> (#p_input: &'a [u8]) -> #q_result {
+                #q_parser_impl
+            }
+        )
+    }
 }
