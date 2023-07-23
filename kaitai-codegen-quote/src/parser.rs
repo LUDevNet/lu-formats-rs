@@ -3,11 +3,16 @@
 //! This module is used to generate code for a parser based on [nom v7.x](https://docs.rs/nom/7)
 
 use kaitai_expr::{parse_expr, Expr, Op};
-use kaitai_struct_types::{Attribute, Endian, EndianSpec, IntTypeRef, WellKnownTypeRef};
+use kaitai_struct_types::{
+    Attribute, Contents, Endian, EndianSpec, IntTypeRef, Repeat, TypeRef, WellKnownTypeRef,
+};
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 
-use crate::{ctx::NamingContext, r#type::Type};
+use crate::{
+    ctx::NamingContext,
+    r#type::{ident_of, Field, FieldGenerics, ResolvedType, Type},
+};
 
 /// Generate the parser expression for a well-known type
 pub fn wk_parser(w: &WellKnownTypeRef, size: Option<&str>, p_endian: &Ident) -> TokenStream {
@@ -95,7 +100,8 @@ pub fn user_type(named_ty: &Type, is_root_parser: bool) -> TokenStream {
         .collect();
     for generics in named_ty.field_generics.values() {
         if generics.external {
-            values.push(quote!(|_| todo!()))
+            let variants_parser = variant_parser_expr(generics, true);
+            values.push(variants_parser)
         }
     }
 
@@ -106,48 +112,66 @@ pub fn user_type(named_ty: &Type, is_root_parser: bool) -> TokenStream {
     }
 }
 
-fn codegen_expr(_expr: &Expr) -> TokenStream {
-    match _expr {
-        Expr::Input(i, fields) => {
-            let mut ts = format_ident!("{}", i).into_token_stream();
-            for field in fields {
-                let f = format_ident!("{}", field);
-                ts = quote!(#ts.#f);
+struct ExprCodegen {
+    in_parent: bool,
+}
+
+impl ExprCodegen {
+    fn new() -> Self {
+        Self { in_parent: false }
+    }
+
+    fn codegen_expr(&self, _expr: &Expr) -> TokenStream {
+        match _expr {
+            Expr::Input(i, fields) => {
+                let mut field_iter = fields.iter();
+                let mut ts = ident_of(match *i {
+                    "_parent" if self.in_parent => field_iter.next().unwrap(),
+                    _ => i,
+                })
+                .into_token_stream();
+                for field in field_iter {
+                    let f = ident_of(field);
+                    ts = quote!(#ts.#f);
+                }
+                ts
             }
-            ts
-        }
-        Expr::If(args) => {
-            let cond = codegen_expr(&args.0);
-            let then_case = codegen_expr(&args.1);
-            let else_case = codegen_expr(&args.2);
-            quote!(match #cond { true => #then_case, false => #else_case })
-        }
-        Expr::Number(u) => Literal::u64_unsuffixed(*u).into_token_stream(),
-        Expr::BinOp { op, args } => {
-            let lhs = codegen_expr(&args.0);
-            let rhs = codegen_expr(&args.1);
-            match op {
-                Op::Mul => quote!((#lhs * #rhs)),
-                Op::Div => quote!((#lhs / #rhs)),
-                Op::Sub => quote!((#lhs - #rhs)),
-                Op::Add => quote!((#lhs + #rhs)),
-                Op::Dot => quote!((#lhs).#rhs),
-                Op::GtEq => quote!((#lhs >= #rhs)),
-                Op::Gt => quote!((#lhs > #rhs)),
-                Op::LtEq => quote!((#lhs <= #rhs)),
-                Op::Lt => quote!((#lhs < #rhs)),
-                Op::Eq => quote!((#lhs == #rhs)),
-                Op::And => quote!((#lhs && #rhs)),
-                Op::Or => quote!((#lhs || #rhs)),
-                Op::LParen | Op::RParen | Op::TernaryTrue | Op::TernaryFalse => quote!(0xBEEF),
+            Expr::If(args) => {
+                let cond = self.codegen_expr(&args.0);
+                let then_case = self.codegen_expr(&args.1);
+                let else_case = self.codegen_expr(&args.2);
+                quote!(match #cond { true => #then_case, false => #else_case })
+            }
+            Expr::Number(u) => Literal::u64_unsuffixed(*u).into_token_stream(),
+            Expr::BinOp { op, args } => {
+                let lhs = self.codegen_expr(&args.0);
+                let rhs = self.codegen_expr(&args.1);
+                match op {
+                    Op::Mul => quote!((#lhs * #rhs)),
+                    Op::Div => quote!((#lhs / #rhs)),
+                    Op::Sub => quote!((#lhs - #rhs)),
+                    Op::Add => quote!((#lhs + #rhs)),
+                    Op::Dot => quote!((#lhs).#rhs),
+                    Op::GtEq => quote!((#lhs >= #rhs)),
+                    Op::Gt => quote!((#lhs > #rhs)),
+                    Op::LtEq => quote!((#lhs <= #rhs)),
+                    Op::Lt => quote!((#lhs < #rhs)),
+                    Op::Eq => quote!((#lhs == #rhs)),
+                    Op::And => quote!((#lhs && #rhs)),
+                    Op::Or => quote!((#lhs || #rhs)),
+                    Op::LParen | Op::RParen | Op::TernaryTrue | Op::TernaryFalse => quote!(0xBEEF),
+                }
             }
         }
     }
 }
 
-pub fn codegen_expr_str(expr: &str) -> TokenStream {
-    let parsed_expr = parse_expr(expr).expect(expr);
-    codegen_expr(&parsed_expr)
+fn codegen_expr_str(expr: &str) -> TokenStream {
+    ExprCodegen::new().codegen_expr(&parse_expr(expr).expect(expr))
+}
+
+fn codegen_expr_str_with(expr: &str, in_parent: bool) -> TokenStream {
+    ExprCodegen { in_parent }.codegen_expr(&parse_expr(expr).expect(expr))
 }
 
 pub(super) fn codegen_parser_fn(
@@ -169,7 +193,7 @@ pub(super) fn codegen_parser_fn(
 
         let field = &self_ty.fields[i];
         field_idents.push(field.ident().clone());
-        parser.push(super::codegen_attr_parse(
+        parser.push(codegen_attr_parse(
             field, self_ty, attr, &p_input, &p_endian, nc,
         ));
     }
@@ -312,4 +336,95 @@ pub(super) fn codegen_parser_fn(
             }
         )
     }
+}
+
+fn codegen_attr_parse(
+    field: &Field,
+    self_ty: &Type,
+    attr: &Attribute,
+    p_input: &Ident,
+    p_endian: &Ident,
+    nc: &NamingContext,
+) -> TokenStream {
+    let f_ident = field.ident();
+    let mut parser = if let Some(ty) = &attr.ty {
+        match ty {
+            TypeRef::WellKnown(w) => wk_parser(w, attr.size.as_deref(), p_endian),
+            TypeRef::Named(n) => {
+                let _named_ty = nc.resolve(n).unwrap();
+                user_type(_named_ty, self_ty.is_root)
+            }
+            TypeRef::Dynamic {
+                switch_on: _,
+                cases: _,
+            } => match field.resolved_ty() {
+                ResolvedType::Auto => {
+                    let id = attr.id.as_deref().unwrap();
+                    let fg = self_ty.field_generics.get(id).expect(id);
+                    if fg.external {
+                        fg.parser.to_token_stream()
+                    } else {
+                        variant_parser_expr(fg, false)
+                    }
+                }
+                ResolvedType::UInt { width } => match width {
+                    1 => quote!(::nom::number::complete::le_u8),
+                    2 => quote!(::nom::number::complete::le_u16),
+                    4 => quote!(::nom::number::complete::le_u32),
+                    8 => quote!(::nom::number::complete::le_u64),
+                    _ => todo!(),
+                },
+            },
+        }
+    } else if let Some(contents) = &attr.contents {
+        let tag = match contents {
+            Contents::String(s) => quote!(#s),
+            Contents::Bytes(b) => quote!(&[#(#b),*]),
+        };
+        // FIXME: different value?
+        quote!(::nom::combinator::value((), ::nom::bytes::complete::tag(#tag)))
+    } else {
+        quote!(::nom::number::complete::le_u32)
+    };
+    if let Some(_r) = &attr.repeat {
+        parser = match _r {
+            Repeat::Expr => {
+                let expr = attr
+                    .repeat_expr
+                    .as_ref()
+                    .expect("repeat == 'expr'")
+                    .as_str();
+                let expr = codegen_expr_str(expr);
+                quote!(::nom::multi::count(#parser, #expr as usize))
+            }
+            Repeat::Eos => todo!(),
+            Repeat::Until => todo!(),
+        }
+    } else if let Some(_e) = &attr.if_expr {
+        let expr = codegen_expr_str(_e);
+        parser = quote!(::nom::combinator::cond(#expr, #parser));
+    }
+    quote!(let (#p_input, #f_ident) = #parser(#p_input)?;)
+}
+
+pub(super) fn variant_parser_expr(fg: &FieldGenerics, in_parent: bool) -> TokenStream {
+    let match_on = codegen_expr_str_with(&fg.switch_expr, in_parent);
+
+    let de = quote!('a);
+    let p_ty = fg.variant_type();
+    let p_enum = &fg.var_enum;
+    let case_other = &fg.var_enum_other;
+    let p_input = format_ident!("_input");
+    quote!(
+        // FIXME: ideally the match would be the outer expression and the parser the inner,
+        // different closures generally have incompatible types.
+        {
+            let __parser: &dyn Fn(&#de [u8]) -> nom::IResult<&#de [u8], #p_ty> = &match #match_on {
+                _ => |#p_input| {
+                    Ok((#p_input, #p_enum::#case_other))
+                }
+            };
+            __parser
+        }
+    )
 }

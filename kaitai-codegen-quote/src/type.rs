@@ -190,7 +190,9 @@ impl Type {
                                 trait_: t,
                                 type_: g,
                                 var_enum,
+                                var_enum_other: format_ident!("_Other"),
                                 parser: format_ident!("parse_{}", orig_attr_id),
+                                switch_expr: s.to_string(),
 
                                 depends_on: fg_depends_on,
                                 need_lifetime: false,
@@ -199,6 +201,8 @@ impl Type {
 
                             self.field_generics.insert(orig_attr_id.to_string(), fg);
                         }
+                    } else {
+                        todo!()
                     }
                 }
             }
@@ -246,14 +250,17 @@ pub struct Field {
     resolved_type: ResolvedType,
 }
 
+pub(crate) fn ident_of(id: &str) -> Ident {
+    match id {
+        "type" => format_ident!("r#type"),
+        _ => format_ident!("{}", id),
+    }
+}
+
 impl Field {
     pub(crate) fn new(orig_attr_id: &str) -> Self {
-        let ident = match orig_attr_id {
-            "type" => format_ident!("r#type"),
-            _ => format_ident!("{}", orig_attr_id),
-        };
         Self {
-            ident,
+            ident: ident_of(orig_attr_id),
             id: orig_attr_id.to_owned(),
             resolved_type: ResolvedType::Auto,
         }
@@ -284,6 +291,8 @@ pub struct FieldGenerics {
     pub(crate) parser: Ident,
     /// Identifier for an enum that has all options
     pub(crate) var_enum: Ident,
+    pub(crate) var_enum_other: Ident,
+    pub(crate) switch_expr: String,
 
     /// (relative) names of the types this field generic may depend on
     pub(crate) depends_on: BTreeSet<String>,
@@ -298,6 +307,13 @@ impl FieldGenerics {
         match self.need_lifetime {
             true => quote!(#n<'a>),
             false => quote!(#n),
+        }
+    }
+
+    pub fn var_enum_generics(&self) -> Option<TokenStream> {
+        match self.need_lifetime {
+            false => None,
+            true => Some(quote!(<'a>)),
         }
     }
 }

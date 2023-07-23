@@ -9,14 +9,11 @@ use std::{
 use ctx::NamingContext;
 use heck::ToUpperCamelCase;
 use kaitai_struct_types::{
-    AnyScalar, Attribute, Contents, IntTypeRef, KsySchema, Repeat, StringOrArray, TypeRef,
-    WellKnownTypeRef,
+    AnyScalar, Attribute, IntTypeRef, KsySchema, StringOrArray, TypeRef, WellKnownTypeRef,
 };
 use proc_macro2::{Ident, TokenStream};
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote};
 use r#type::{Field, FieldGenerics, ResolvedType, Type};
-
-use crate::parser::codegen_expr_str;
 
 mod ctx;
 mod parser;
@@ -113,7 +110,6 @@ fn codegen_type_ref(
             let gen = field_generics.unwrap();
             let g = &gen.type_;
             let t = &gen.trait_;
-            let v = &gen.var_enum;
             if gen.external {
                 tc.generics.push(quote!(#g: #t));
                 tc.generics_use.push(quote!(#g));
@@ -125,6 +121,7 @@ fn codegen_type_ref(
 
             let mut inner_set = BTreeSet::<String>::new();
 
+            let enclosing_type = gen.var_enum.to_string();
             for (case_key, case_type) in cases.iter() {
                 let mut _enum_set = BTreeSet::<String>::new();
                 let name: String = match case_key {
@@ -142,7 +139,7 @@ fn codegen_type_ref(
                 };
                 let n: Ident = format_ident!("{}", name);
                 let inner =
-                    codegen_type_ref(case_type, nc, tc, &v.to_string(), &name, field_generics);
+                    codegen_type_ref(case_type, nc, tc, &enclosing_type, &name, field_generics);
                 enum_cases.push(quote! {
                     #n(#inner),
                 });
@@ -162,11 +159,10 @@ fn codegen_type_ref(
             }
 
             // variant enum generics
-            let var_enum_gen = match gen.need_lifetime {
-                false => quote!(),
-                true => quote!(<'a>),
-            };
+            let var_enum_gen = gen.var_enum_generics();
 
+            let v_use = gen.variant_type();
+            let case_other = &gen.var_enum_other;
             tc.traits.push(quote! {
                 #[doc = #trait_doc]
                 pub trait #t {
@@ -176,94 +172,22 @@ fn codegen_type_ref(
                 #[doc = #var_enum_doc]
                 #[derive(Debug, Clone, PartialEq)]
                 #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
-                pub enum #v #var_enum_gen {
+                pub enum #v_use {
                     #(#enum_cases)*
+                    #case_other
                 }
 
-                // FIXME: remove
-                impl #t for () {}
-
-                impl #var_enum_gen #t for #v #var_enum_gen {}
+                impl #var_enum_gen #t for #v_use {}
 
                 #(#trait_impl_cases)*
             });
             if gen.external {
                 quote!(#g)
             } else {
-                quote!(#v #var_enum_gen)
+                quote!(#v_use)
             }
         }
     }
-}
-
-fn codegen_attr_parse(
-    field: &Field,
-    self_ty: &Type,
-    attr: &Attribute,
-    p_input: &Ident,
-    p_endian: &Ident,
-    nc: &NamingContext,
-) -> TokenStream {
-    let f_ident = field.ident();
-    let mut parser = if let Some(ty) = &attr.ty {
-        match ty {
-            TypeRef::WellKnown(w) => parser::wk_parser(w, attr.size.as_deref(), p_endian),
-            TypeRef::Named(n) => {
-                let _named_ty = nc.resolve(n).unwrap();
-                parser::user_type(_named_ty, self_ty.is_root)
-            }
-            TypeRef::Dynamic {
-                switch_on: _,
-                cases: _,
-            } => match field.resolved_ty() {
-                ResolvedType::Auto => {
-                    let id = attr.id.as_deref().unwrap();
-                    let fg = self_ty.field_generics.get(id).expect(id);
-                    if fg.external {
-                        fg.parser.to_token_stream()
-                    } else {
-                        let t = &fg.var_enum;
-                        quote!((|i: &'a[u8]| -> ::nom::IResult<&'a[u8], #t> { todo!() }))
-                    }
-                }
-                ResolvedType::UInt { width } => match width {
-                    1 => quote!(::nom::number::complete::le_u8),
-                    2 => quote!(::nom::number::complete::le_u16),
-                    4 => quote!(::nom::number::complete::le_u32),
-                    8 => quote!(::nom::number::complete::le_u64),
-                    _ => todo!(),
-                },
-            },
-        }
-    } else if let Some(contents) = &attr.contents {
-        let tag = match contents {
-            Contents::String(s) => quote!(#s),
-            Contents::Bytes(b) => quote!(&[#(#b),*]),
-        };
-        // FIXME: different value?
-        quote!(::nom::combinator::value((), ::nom::bytes::complete::tag(#tag)))
-    } else {
-        quote!(::nom::number::complete::le_u32)
-    };
-    if let Some(_r) = &attr.repeat {
-        parser = match _r {
-            Repeat::Expr => {
-                let expr = attr
-                    .repeat_expr
-                    .as_ref()
-                    .expect("repeat == 'expr'")
-                    .as_str();
-                let expr = codegen_expr_str(expr);
-                quote!(::nom::multi::count(#parser, #expr as usize))
-            }
-            Repeat::Eos => todo!(),
-            Repeat::Until => todo!(),
-        }
-    } else if let Some(_e) = &attr.if_expr {
-        let expr = codegen_expr_str(_e);
-        parser = quote!(::nom::combinator::cond(#expr, #parser));
-    }
-    quote!(let (#p_input, #f_ident) = #parser(#p_input)?;)
 }
 
 fn doc_type_seq<S: AsRef<str>, I: IntoIterator<Item = S>>(
