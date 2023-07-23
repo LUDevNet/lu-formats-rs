@@ -1,12 +1,13 @@
 use crate::{
-    common::{Bool, Lot, QuaternionWxyz, U1Wstr, U4Wstr},
+    common::{Bool, Lot, QuaternionWxyz, U1Str, U1Wstr, U4Wstr},
     files::luz::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
         parse_lnv_entry, parse_platform_data, parse_platform_waypoint_data, parse_property_data,
         parse_racing_waypoint_data, parse_rail_waypoint_data, parse_spawner_data,
-        parse_spawner_waypoint_data, parse_transition_point, BoundaryInfo, CameraData,
-        CameraWaypointData, Lnv, LnvEntry, PlatformData, PlatformWaypointData, PropertyData,
-        RacingWaypointData, RailWaypointData, SpawnerData, SpawnerWaypointData, TransitionPoint,
+        parse_spawner_waypoint_data, parse_transition_info, parse_transition_point, BoundaryInfo,
+        CameraData, CameraWaypointData, Lnv, LnvEntry, PlatformData, PlatformWaypointData,
+        PropertyData, RacingWaypointData, RailWaypointData, SpawnerData, SpawnerWaypointData,
+        TransitionInfo, TransitionPoint,
     },
 };
 
@@ -639,6 +640,111 @@ fn test_transition_point() {
                     y: 2.0,
                     z: 4.0
                 }
+            }
+        ))
+    );
+}
+
+#[test]
+fn test_transition_info() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.push(0x00);
+    bytes.extend_from_slice(&0.5f32.to_le_bytes());
+
+    bytes.extend_from_slice(&10u32.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&1f32.to_le_bytes());
+    bytes.extend_from_slice(&2f32.to_le_bytes());
+    bytes.extend_from_slice(&4f32.to_le_bytes());
+
+    bytes.extend_from_slice(&10u32.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&100f32.to_le_bytes());
+    bytes.extend_from_slice(&99f32.to_le_bytes());
+    bytes.extend_from_slice(&98f32.to_le_bytes());
+
+    let p1 = TransitionPoint {
+        scene_id: 10,
+        layer_id: 1,
+        transition_point: Vector3 {
+            x: 1.0,
+            y: 2.0,
+            z: 4.0,
+        },
+    };
+    let p2 = TransitionPoint {
+        scene_id: 10,
+        layer_id: 1,
+        transition_point: Vector3 {
+            x: 100.0,
+            y: 99.0,
+            z: 98.0,
+        },
+    };
+
+    assert_eq!(
+        parse_transition_info(33)(&bytes),
+        Ok((
+            EMPTY,
+            TransitionInfo {
+                unknown1: Some(U1Str {
+                    length: 0,
+                    str: EMPTY
+                }),
+                unknown2: Some(0.5),
+                transition_points: vec![p1.clone(), p2.clone()]
+            }
+        ))
+    );
+
+    for _ in 0..3 {
+        bytes.extend_from_slice(&10u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&1f32.to_le_bytes());
+        bytes.extend_from_slice(&2f32.to_le_bytes());
+        bytes.extend_from_slice(&4f32.to_le_bytes());
+    }
+
+    assert_eq!(
+        parse_transition_info(34)(&bytes),
+        Ok((
+            EMPTY,
+            TransitionInfo {
+                unknown1: Some(U1Str {
+                    length: 0,
+                    str: EMPTY
+                }),
+                unknown2: Some(0.5),
+                transition_points: vec![p1.clone(), p2.clone(), p1.clone(), p1.clone(), p1.clone()]
+            }
+        ))
+    );
+
+    bytes.drain((bytes.len() - 3 * 20)..);
+
+    assert_eq!(
+        parse_transition_info(39)(&bytes),
+        Ok((
+            EMPTY,
+            TransitionInfo {
+                unknown1: Some(U1Str {
+                    length: 0,
+                    str: EMPTY
+                }),
+                unknown2: Some(0.5),
+                transition_points: vec![p1.clone(), p2.clone()]
+            }
+        ))
+    );
+
+    assert_eq!(
+        parse_transition_info(40)(&bytes[5..]),
+        Ok((
+            EMPTY,
+            TransitionInfo {
+                unknown1: None,
+                unknown2: None,
+                transition_points: vec![p1.clone(), p2.clone()]
             }
         ))
     );
