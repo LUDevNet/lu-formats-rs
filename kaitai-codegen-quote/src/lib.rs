@@ -178,6 +178,7 @@ fn codegen_type_ref(
                 }
 
                 impl #var_enum_gen #t for #v_use {}
+                impl #t for () {} // used for empty generics
 
                 #(#trait_impl_cases)*
             });
