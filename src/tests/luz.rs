@@ -2,12 +2,13 @@ use crate::{
     common::{Bool, Lot, QuaternionWxyz, U1Str, U1Wstr, U4Wstr},
     files::luz::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
-        parse_lnv_entry, parse_platform_data, parse_platform_waypoint_data, parse_property_data,
-        parse_racing_waypoint_data, parse_rail_waypoint_data, parse_spawner_data,
-        parse_spawner_waypoint_data, parse_transition_info, parse_transition_point, parse_waypoint,
-        BoundaryInfo, CameraData, CameraWaypointData, Lnv, LnvEntry, PlatformData,
-        PlatformWaypointData, PropertyData, RacingWaypointData, RailWaypointData, SpawnerData,
-        SpawnerWaypointData, TransitionInfo, TransitionPoint, Waypoint,
+        parse_lnv_entry, parse_path, parse_platform_data, parse_platform_waypoint_data,
+        parse_property_data, parse_racing_waypoint_data, parse_rail_waypoint_data,
+        parse_spawner_data, parse_spawner_waypoint_data, parse_transition_info,
+        parse_transition_point, parse_waypoint, BoundaryInfo, CameraData, CameraWaypointData, Lnv,
+        LnvEntry, NpcWaypointData, Path, PlatformData, PlatformWaypointData, PropertyData,
+        RacingWaypointData, RailWaypointData, SpawnerData, SpawnerWaypointData, TransitionInfo,
+        TransitionPoint, Waypoint, WaypointDataVariants,
     },
 };
 
@@ -786,6 +787,59 @@ fn test_transition_info() {
                 unknown1: None,
                 unknown2: None,
                 transition_points: vec![p1.clone(), p2.clone()]
+            }
+        ))
+    );
+}
+
+#[test]
+fn test_path() {
+    let mut bytes = Vec::<u8>::new();
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"\x04N\0a\0m\0e\0");
+    bytes.extend_from_slice(b"\x02A\0Z\0");
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // NPC
+    bytes.extend_from_slice(&100u32.to_le_bytes()); // flags
+    bytes.extend_from_slice(&2u32.to_le_bytes()); // path behavior loop
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // 1 waypoint
+
+    bytes.extend_from_slice(&10f32.to_le_bytes()); // x
+    bytes.extend_from_slice(&11f32.to_le_bytes()); // y
+    bytes.extend_from_slice(&12f32.to_le_bytes()); // z
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // 0 config entries (npc)
+
+    assert_eq!(
+        parse_path(&bytes),
+        Ok((
+            EMPTY,
+            Path {
+                version: 1,
+                name: U1Wstr {
+                    length: 4,
+                    str: b"N\0a\0m\0e\0"
+                },
+                type_name: Some(U1Wstr {
+                    length: 2,
+                    str: b"A\0Z\0"
+                }),
+                r#type: 0,
+                flags: 100,
+                behavior: 2,
+                data: crate::files::luz::PathDataVariants::_Other,
+                num_waypoints: 1,
+                waypoints: vec![Waypoint::<WaypointDataVariants> {
+                    position: Vector3 {
+                        x: 10.0,
+                        y: 11.0,
+                        z: 12.0
+                    },
+                    data: WaypointDataVariants::Npc(NpcWaypointData {
+                        config: Lnv {
+                            num_entries: 0,
+                            entries: vec![]
+                        }
+                    })
+                }]
             }
         ))
     );
