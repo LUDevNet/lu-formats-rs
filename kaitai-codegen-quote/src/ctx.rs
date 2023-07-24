@@ -85,7 +85,9 @@ impl NamingContext {
                 }
             }
         }
-        results.entry(id.to_owned()).or_default().union(&o);
+        if !t.is_root {
+            results.entry(id.to_owned()).or_default().union(&o);
+        }
         o
     }
 

@@ -5,7 +5,8 @@
 use heck::ToUpperCamelCase;
 use kaitai_expr::{parse_expr, Expr, Op};
 use kaitai_struct_types::{
-    Attribute, Contents, Endian, EndianSpec, IntTypeRef, Repeat, TypeRef, WellKnownTypeRef,
+    AnyScalar, Attribute, Contents, Endian, EndianSpec, IntTypeRef, Repeat, TypeRef,
+    WellKnownTypeRef,
 };
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote, ToTokens};
@@ -388,28 +389,62 @@ fn codegen_type_ref_parse(
             let _named_ty = nc.resolve(n).unwrap();
             user_type(nc, _named_ty, self_ty.is_root, in_parent, p_endian)
         }
-        TypeRef::Dynamic {
-            switch_on: _,
-            cases: _,
-        } => match resolved_ty {
-            ResolvedType::Auto => {
-                let id = type_ref_id.unwrap();
-                let fg = self_ty.field_generics.get(id).expect(id);
-                if fg.external {
-                    fg.parser.to_token_stream()
-                } else {
-                    variant_parser_expr(nc, self_ty.is_root, fg, in_parent, p_endian)
+        TypeRef::Dynamic { switch_on, cases } => {
+            match resolved_ty {
+                ResolvedType::Auto => {
+                    let id = type_ref_id.unwrap();
+                    let fg = self_ty.field_generics.get(id).expect(id);
+                    if fg.external {
+                        fg.parser.to_token_stream()
+                    } else {
+                        variant_parser_expr(nc, self_ty.is_root, fg, in_parent, p_endian)
+                    }
+                }
+                ResolvedType::UInt { width } => {
+                    let switch_expr = match switch_on {
+                        AnyScalar::Null => todo!(),
+                        AnyScalar::Bool(_) => todo!(),
+                        AnyScalar::String(expr) => codegen_expr_str(expr),
+                        AnyScalar::UInt(_) => todo!(),
+                    };
+                    let ty = match width {
+                        // FIXME uses cases
+                        1 => quote!(u8),
+                        2 => quote!(u16),
+                        4 => quote!(u32),
+                        8 => quote!(u64),
+                        _ => todo!(),
+                    };
+                    let mut q_cases = Vec::<TokenStream>::new();
+                    for (k, v) in cases {
+                        let case = match k {
+                            AnyScalar::Bool(b) => quote!(#b),
+                            AnyScalar::Null => todo!(),
+                            AnyScalar::String(_) => todo!(),
+                            AnyScalar::UInt(_) => todo!(),
+                        };
+                        let parser = match v {
+                            TypeRef::WellKnown(w) => wk_parser(w, None, p_endian),
+                            TypeRef::Named(_) => todo!(),
+                            TypeRef::Dynamic { .. } => todo!(),
+                        };
+                        q_cases.push(quote!(#case => Box::new(::nom::combinator::map(#parser, #ty::from))));
+                    }
+                    let exhaustive = true;
+                    if !exhaustive {
+                        q_cases.push(quote!( _ => Box::new(::nom::combinator::map(|_| todo!(), |x: u8| x as #ty))));
+                    }
+
+                    quote!({
+                        let __parser: Box<dyn FnMut(&'a [u8]) -> ::nom::IResult<&'a[u8], #ty>> = match #switch_expr {
+                            #(#q_cases,)*
+                        };
+                        __parser
+                    })
+                    /**/
                 }
             }
-            ResolvedType::UInt { width } => match width {
-                // FIXME uses cases
-                1 => quote!(::nom::number::complete::le_u8),
-                2 => quote!(::nom::number::complete::le_u16),
-                4 => quote!(::nom::number::complete::le_u32),
-                8 => quote!(::nom::number::complete::le_u64),
-                _ => todo!(),
-            },
-        },
+        }
     }
 }
 
