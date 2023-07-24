@@ -185,6 +185,10 @@ pub struct Attribute {
     /// Fixed expected contents
     #[serde(default)]
     pub contents: Option<Contents>,
+
+    /// String encoding
+    #[serde(default)]
+    pub encoding: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]

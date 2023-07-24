@@ -428,7 +428,9 @@ fn codegen_type_ref_parse(
                             TypeRef::Named(_) => todo!(),
                             TypeRef::Dynamic { .. } => todo!(),
                         };
-                        q_cases.push(quote!(#case => Box::new(::nom::combinator::map(#parser, #ty::from))));
+                        q_cases.push(
+                            quote!(#case => Box::new(::nom::combinator::map(#parser, #ty::from))),
+                        );
                     }
                     let exhaustive = true;
                     if !exhaustive {
@@ -555,4 +557,31 @@ fn variant_parser_expr(
             __parser
         }
     )
+}
+
+pub(crate) fn serialize_with(attr: &Attribute) -> Option<TokenStream> {
+    if let Some(TypeRef::WellKnown(WellKnownTypeRef::Str)) = &attr.ty {
+        let encoding = attr.encoding.as_deref().unwrap();
+        if encoding.eq_ignore_ascii_case("utf-16le") {
+            Some(quote!(
+                #[cfg_attr(feature = "serde", serde(serialize_with = "crate::_rt::serialize_utf16_le"))]
+            ))
+        } else if encoding.eq_ignore_ascii_case("utf-16be") {
+            Some(quote!(
+                #[cfg_attr(feature = "serde", serde(serialize_with = "crate::_rt::serialize_utf16_be"))]
+            ))
+        } else if encoding.eq_ignore_ascii_case("utf-8") {
+            Some(quote!(
+                #[cfg_attr(feature = "serde", serde(serialize_with = "crate::_rt::serialize_utf18"))]
+            ))
+        } else if encoding.eq_ignore_ascii_case("ascii") {
+            Some(quote!(
+                #[cfg_attr(feature = "serde", serde(serialize_with = "crate::_rt::serialize_ascii"))]
+            ))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
 }

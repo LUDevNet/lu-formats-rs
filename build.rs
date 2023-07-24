@@ -60,6 +60,8 @@ fn main() {
         available_imports: BTreeMap::new(),
     };
     let lib_path = ctx.out_dir.join("lib.rs");
+    let rt_path = ctx.out_dir.join("_rt.rs");
+    kaitai_codegen_quote::codegen_rt(&rt_path).unwrap();
     let (_common_path, common_id) = ctx.run("common", "common").unwrap();
     let files_mod_path = ctx.out_dir.join("files").join("mod.rs");
     let (_fdb_path, fdb_id) = ctx.run("files", "fdb").unwrap();
@@ -77,6 +79,7 @@ fn main() {
     write!(files_mod_file, "{}", files_mod).unwrap();
 
     let lib = quote!(
+        pub(crate) mod _rt;
         pub mod #common_id;
 
         #[doc = "# File Formats"]

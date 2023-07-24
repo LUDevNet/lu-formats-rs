@@ -17,7 +17,10 @@ use r#type::{Field, FieldGenerics, ResolvedType, Type};
 
 mod ctx;
 mod parser;
+mod rt;
 mod r#type;
+
+pub use rt::codegen_rt;
 
 pub struct Module {
     pub id: Ident,
@@ -218,7 +221,6 @@ impl Context<'_> {
         let attr_doc_ref = attr.doc_ref.as_ref();
         let attr_doc_refs = attr_doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
 
-        let ty_doc = format!("Type: `{:?}`", attr.ty);
         let if_doc = attr
             .if_expr
             .as_ref()
@@ -257,12 +259,14 @@ impl Context<'_> {
             ty
         };
 
+        let serialize_with = parser::serialize_with(attr);
+
         Ok(quote!(
             #attr_doc
             #(#[doc = #attr_doc_refs])*
-            #[doc = #ty_doc]
             #if_doc
             #repeat_doc
+            #serialize_with
             pub #attr_id: #ty
         ))
     }
@@ -439,11 +443,7 @@ impl Context<'_> {
             #(#enums)*
         };
 
-        let writer = std::fs::File::create(&out_path)?;
-        let mut writer = BufWriter::new(writer);
-        write!(writer, "{}", file)?;
-
-        Command::new("rustfmt").arg(&out_path).spawn().unwrap();
+        write_file(&out_path, file)?;
 
         Ok(Module {
             id: sid,
@@ -452,4 +452,12 @@ impl Context<'_> {
             import,
         })
     }
+}
+
+fn write_file(out_path: &Path, file: TokenStream) -> Result<(), io::Error> {
+    let writer = std::fs::File::create(out_path)?;
+    let mut writer = BufWriter::new(writer);
+    write!(writer, "{}", file)?;
+    Command::new("rustfmt").arg(out_path).spawn().unwrap();
+    Ok(())
 }
