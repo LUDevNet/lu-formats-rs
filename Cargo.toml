@@ -6,11 +6,13 @@ edition = "2021"
 [features]
 nom = ["dep:nom"]
 serde = ["dep:serde"]
+json = ["dep:serde_json"]
 default = ["nom", "serde"]
 
 [dependencies]
 nom = { version = "7.1.3", optional = true }
 serde = { version = "1.0.174", optional = true, features = ["derive"] }
+serde_json = { version = "1.0.103", optional = true }
 
 [build-dependencies]
 serde_yaml = "0.9.16"
@@ -20,3 +22,7 @@ quote = "1.0.23"
 
 [workspace]
 members = [".", "kaitai-struct-types", "kaitai-codegen-quote", "kaitai-expr"]
+
+[[bin]]
+name = "dump-luz"
+required-features = ["json"]
