@@ -182,6 +182,10 @@ pub struct Attribute {
     #[serde(default)]
     pub repeat_expr: Option<String>,
 
+    /// If [Repeat::Expr], the expression to check for repetition end
+    #[serde(default)]
+    pub repeat_until: Option<String>,
+
     /// Fixed expected contents
     #[serde(default)]
     pub contents: Option<Contents>,
@@ -202,7 +206,7 @@ pub enum Contents {
 }
 
 /// Kind of repetition
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Repeat {
     /// Based on an expression
