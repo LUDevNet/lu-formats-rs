@@ -206,72 +206,84 @@ fn doc_type_set(nc: &NamingContext, key: &str, set: &BTreeSet<String>) -> Option
     (!set.is_empty()).then(|| doc_type_seq(nc, key, set))
 }
 
-impl Context<'_> {
-    fn codegen_attr(
-        &self,
-        nc: &NamingContext,
-        attr: &Attribute,
-        self_ty: &Type,
-        field: &Field,
-        tc: &mut TyContext,
-    ) -> io::Result<TokenStream> {
-        let orig_attr_id = field.id();
-        let attr_id = field.ident();
-        let attr_doc = attr.doc.as_deref().map(|d| quote!(#[doc = #d]));
-        let attr_doc_ref = attr.doc_ref.as_ref();
-        let attr_doc_refs = attr_doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
-
-        let if_doc = attr
-            .if_expr
-            .as_ref()
-            .map(|i| format!("If: `{}`", i))
-            .map(|s| {
-                quote!(
-                    #[doc = #s]
-                )
-            });
-        let repeat_doc = attr.repeat.as_ref().map(|r| {
-            let rep_doc = format!("Repeat: `{:?}`", r);
-            quote!(#[doc = #rep_doc])
-        });
-        let fg = self_ty.field_generics.get(orig_attr_id);
-        let ty = match field.resolved_ty() {
-            ResolvedType::Auto => {
-                if let Some(ty) = &attr.ty {
-                    let enclosing_type = self_ty.rust_struct_name.as_str();
-                    codegen_type_ref(ty, nc, tc, enclosing_type, attr_id, fg)
-                } else {
-                    quote!(())
-                }
+fn codegen_attr_ty(
+    nc: &NamingContext,
+    attr: &Attribute,
+    self_ty: &Type,
+    field: &Field,
+    tc: &mut TyContext,
+) -> io::Result<TokenStream> {
+    let attr_id = field.ident();
+    let orig_attr_id = field.id();
+    let fg = self_ty.field_generics.get(orig_attr_id);
+    let ty = match field.resolved_ty() {
+        ResolvedType::Auto => {
+            if let Some(ty) = &attr.ty {
+                let enclosing_type = self_ty.rust_struct_name.as_str();
+                codegen_type_ref(ty, nc, tc, enclosing_type, attr_id, fg)
+            } else {
+                quote!(())
             }
-            ResolvedType::UInt { width } => match *width {
-                1 => quote!(u8),
-                2 => quote!(u16),
-                4 => quote!(u32),
-                8 => quote!(u64),
-                _ => panic!("width not supported"),
-            },
-        };
-        let ty = if let Some(_rep) = &attr.repeat {
-            quote!(Vec<#ty>)
-        } else if let Some(_expr) = &attr.if_expr {
-            quote!(Option<#ty>)
-        } else {
-            ty
-        };
+        }
+        ResolvedType::UInt { width } => match *width {
+            1 => quote!(u8),
+            2 => quote!(u16),
+            4 => quote!(u32),
+            8 => quote!(u64),
+            _ => panic!("width not supported"),
+        },
+    };
+    let ty = if let Some(_rep) = &attr.repeat {
+        quote!(Vec<#ty>)
+    } else if let Some(_expr) = &attr.if_expr {
+        quote!(Option<#ty>)
+    } else {
+        ty
+    };
+    Ok(ty)
+}
 
-        let serialize_with = parser::serialize_with(attr);
+fn codegen_attr(
+    nc: &NamingContext,
+    attr: &Attribute,
+    self_ty: &Type,
+    field: &Field,
+    tc: &mut TyContext,
+) -> io::Result<TokenStream> {
+    let attr_doc = attr.doc.as_deref().map(|d| quote!(#[doc = #d]));
+    let attr_doc_ref = attr.doc_ref.as_ref();
+    let attr_doc_refs = attr_doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
 
-        Ok(quote!(
-            #attr_doc
-            #(#[doc = #attr_doc_refs])*
-            #if_doc
-            #repeat_doc
-            #serialize_with
-            pub #attr_id: #ty
-        ))
-    }
+    let if_doc = attr
+        .if_expr
+        .as_ref()
+        .map(|i| format!("If: `{}`", i))
+        .map(|s| {
+            quote!(
+                #[doc = #s]
+            )
+        });
+    let repeat_doc = attr.repeat.as_ref().map(|r| {
+        let rep_doc = format!("Repeat: `{:?}`", r);
+        quote!(#[doc = #rep_doc])
+    });
 
+    let ty = codegen_attr_ty(nc, attr, self_ty, field, tc)?;
+
+    let serialize_with = parser::serialize_with(attr);
+
+    let attr_id = field.ident();
+    Ok(quote!(
+        #attr_doc
+        #(#[doc = #attr_doc_refs])*
+        #if_doc
+        #repeat_doc
+        #serialize_with
+        pub #attr_id: #ty
+    ))
+}
+
+impl Context<'_> {
     fn codegen_struct(
         &self,
         nc: &NamingContext,
@@ -304,7 +316,7 @@ impl Context<'_> {
                     continue;
                 }
                 let field = &self_ty.fields[i];
-                let attr = self.codegen_attr(nc, attr, self_ty, field, &mut tc)?;
+                let attr = codegen_attr(nc, attr, self_ty, field, &mut tc)?;
                 attrs.push(attr);
             }
             quote!({
