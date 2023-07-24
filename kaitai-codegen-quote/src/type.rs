@@ -81,6 +81,46 @@ impl ObligationTree {
     }
 }
 
+fn var_case(key: &AnyScalar, val: &TypeRef, enum_set: &mut BTreeSet<String>) -> Case {
+    let (name, kind) = match key {
+        AnyScalar::Null => todo!(),
+        AnyScalar::Bool(true) => ("True".to_owned(), CaseKind::Bool(true)),
+        AnyScalar::Bool(false) => ("False".to_owned(), CaseKind::Bool(false)),
+        AnyScalar::String(s) => {
+            let (_enum, part) = s.split_once("::").unwrap();
+            enum_set.insert(_enum.to_owned());
+            (
+                part.to_upper_camel_case(),
+                CaseKind::Enum(_enum.to_string(), part.to_string()),
+            )
+        }
+        AnyScalar::UInt(i) => (format!("N{}", i), CaseKind::Number(*i)),
+    };
+    Case::new(&name, kind, val.clone())
+}
+
+fn all_unsigned<'a, I: Iterator<Item = &'a TypeRef>>(cases: I) -> Option<IntTypeRef> {
+    let mut unsigned: Option<IntTypeRef> = None;
+    let mut all_unsigned = true;
+    for case in cases {
+        if let TypeRef::WellKnown(WellKnownTypeRef::Unsigned(u)) = case {
+            unsigned = match unsigned {
+                Some(i) if u > &i => Some(*u),
+                Some(i) => Some(i),
+                None => Some(*u),
+            };
+        } else {
+            all_unsigned = false;
+            break;
+        }
+    }
+    if all_unsigned {
+        unsigned
+    } else {
+        None
+    }
+}
+
 impl Type {
     fn new_named(key: &str, seq: &[Attribute], is_root: bool, endian: Endian) -> Self {
         let rust_struct_name = key.to_upper_camel_case();
@@ -159,48 +199,42 @@ impl Type {
                     self.depends_on.insert(n.clone());
                 }
                 TypeRef::Dynamic { switch_on, cases } => {
-                    if let AnyScalar::String(s) = switch_on {
+                    if let Some(type_ref) = all_unsigned(cases.values()) {
+                        f.resolved_type = ResolvedType::UInt {
+                            width: type_ref.bytes(),
+                        }
+                    } else if let AnyScalar::String(s) = switch_on {
                         let rust_generic_name = orig_attr_id.to_upper_camel_case();
                         let g = format_ident!("{}", rust_generic_name);
                         let t = format_ident!("I{}{}", self.ident, &g);
                         let var_enum = format_ident!("{}{}Variants", self.ident, &g);
                         let mut fg_depends_on = BTreeSet::new();
-                        let mut unsigned: Option<IntTypeRef> = None;
-                        let mut all_unsigned = true;
-                        for case in cases.values() {
+                        let mut _enum_set = BTreeSet::<String>::new();
+
+                        let mut fg_cases = Vec::<Case>::new();
+                        for (case_key, case) in cases {
+                            let _case = var_case(case_key, case, &mut _enum_set);
                             if let TypeRef::Named(n) = case {
                                 self.may_depend_on.insert(n.clone());
                                 fg_depends_on.insert(n.clone());
                             }
-                            if let TypeRef::WellKnown(WellKnownTypeRef::Unsigned(u)) = case {
-                                unsigned = match unsigned {
-                                    Some(i) if u > &i => Some(*u),
-                                    Some(i) => Some(i),
-                                    None => Some(*u),
-                                };
-                            } else {
-                                all_unsigned = false;
-                            }
+                            fg_cases.push(_case)
                         }
-                        if all_unsigned {
-                            let width = unsigned.unwrap().bytes();
-                            f.resolved_type = ResolvedType::UInt { width }
-                        } else {
-                            let fg = FieldGenerics {
-                                trait_: t,
-                                type_: g,
-                                var_enum,
-                                var_enum_other: format_ident!("_Other"),
-                                parser: format_ident!("parse_{}", orig_attr_id),
-                                switch_expr: s.to_string(),
+                        let fg = FieldGenerics {
+                            trait_: t,
+                            type_: g,
+                            var_enum,
+                            var_enum_other: format_ident!("_Other"),
+                            parser: format_ident!("parse_{}", orig_attr_id),
+                            switch_expr: s.to_string(),
+                            cases: fg_cases,
 
-                                depends_on: fg_depends_on,
-                                need_lifetime: false,
-                                external: s.starts_with("_parent."),
-                            };
+                            depends_on: fg_depends_on,
+                            need_lifetime: false,
+                            external: s.starts_with("_parent."),
+                        };
 
-                            self.field_generics.insert(orig_attr_id.to_string(), fg);
-                        }
+                        self.field_generics.insert(orig_attr_id.to_string(), fg);
                     } else {
                         todo!()
                     }
@@ -283,6 +317,34 @@ impl Field {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum CaseKind {
+    Enum(String, String),
+    Bool(bool),
+    Number(u64),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Case {
+    pub ident: Ident,
+    pub kind: CaseKind,
+    pub ty: TypeRef,
+}
+
+impl Case {
+    pub fn new(name: &str, kind: CaseKind, ty: TypeRef) -> Self {
+        Self {
+            ident: format_ident!("{}", name),
+            kind,
+            ty,
+        }
+    }
+
+    pub fn ident(&self) -> &Ident {
+        &self.ident
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FieldGenerics {
     /// The name of the generic field
     pub(crate) type_: Ident,
@@ -293,6 +355,9 @@ pub struct FieldGenerics {
     pub(crate) var_enum: Ident,
     pub(crate) var_enum_other: Ident,
     pub(crate) switch_expr: String,
+
+    // NOTE: depends on stable ordering in kaitai-struct-types
+    pub(crate) cases: Vec<Case>,
 
     /// (relative) names of the types this field generic may depend on
     pub(crate) depends_on: BTreeSet<String>,

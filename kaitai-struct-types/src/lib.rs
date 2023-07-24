@@ -356,7 +356,7 @@ impl<'de> Deserialize<'de> for AnyScalar {
 }
 
 /// Reference to a Type
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypeRef {
     /// A well-known type
     WellKnown(WellKnownTypeRef),

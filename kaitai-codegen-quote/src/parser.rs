@@ -2,6 +2,7 @@
 //!
 //! This module is used to generate code for a parser based on [nom v7.x](https://docs.rs/nom/7)
 
+use heck::ToUpperCamelCase;
 use kaitai_expr::{parse_expr, Expr, Op};
 use kaitai_struct_types::{
     Attribute, Contents, Endian, EndianSpec, IntTypeRef, Repeat, TypeRef, WellKnownTypeRef,
@@ -11,7 +12,7 @@ use quote::{format_ident, quote, ToTokens};
 
 use crate::{
     ctx::NamingContext,
-    r#type::{ident_of, Field, FieldGenerics, ResolvedType, Type},
+    r#type::{ident_of, CaseKind, Field, FieldGenerics, ResolvedType, Type},
 };
 
 /// Generate the parser expression for a well-known type
@@ -78,7 +79,13 @@ pub fn wk_parser(w: &WellKnownTypeRef, size: Option<&str>, p_endian: &Ident) -> 
 }
 
 /// Generate the parser expression for a user type
-pub fn user_type(named_ty: &Type, is_root_parser: bool) -> TokenStream {
+fn user_type(
+    nc: &NamingContext,
+    named_ty: &Type,
+    is_root_parser: bool,
+    in_parent: bool,
+    p_endian: &Ident,
+) -> TokenStream {
     fn _root_field(i: Ident) -> TokenStream {
         quote!(_root.#i)
     }
@@ -98,9 +105,36 @@ pub fn user_type(named_ty: &Type, is_root_parser: bool) -> TokenStream {
             false => _root_field,
         })
         .collect();
+    for obligation in named_ty.parent_obligations.fields() {
+        match obligation.as_str() {
+            "_parent" => {
+                for obligation in named_ty
+                    .parent_obligations
+                    .get(obligation)
+                    .unwrap()
+                    .fields()
+                {
+                    match obligation.as_str() {
+                        "_parent" => todo!(),
+                        _ => {
+                            let i = ident_of(obligation);
+                            values.push(if in_parent {
+                                i.into_token_stream()
+                            } else {
+                                quote!(_parent.#i)
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {
+                values.push(ident_of(obligation).into_token_stream());
+            }
+        }
+    }
     for generics in named_ty.field_generics.values() {
         if generics.external {
-            let variants_parser = variant_parser_expr(generics, true);
+            let variants_parser = variant_parser_expr(nc, is_root_parser, generics, true, p_endian);
             values.push(variants_parser)
         }
     }
@@ -288,7 +322,7 @@ pub(super) fn codegen_parser_fn(
         .map(|(_field, generics)| {
             let p = &generics.parser;
             let t = &generics.type_;
-            quote!(#p: impl Fn(&'a [u8]) -> ::nom::IResult<#_input_ty, #t>,)
+            quote!(mut #p: impl FnMut(&'a [u8]) -> ::nom::IResult<#_input_ty, #t>,)
         })
         .collect();
 
@@ -320,7 +354,7 @@ pub(super) fn codegen_parser_fn(
                 #(#root_fields)*
                 #(#parser_args),*
                 #(#_external_field_generics)*
-            ) -> impl Fn(#_input_ty) -> #q_result {
+            ) -> impl FnMut(#_input_ty) -> #q_result {
                 #_root
                 #_parent
                 move |#p_input: #_input_ty| {
@@ -338,6 +372,47 @@ pub(super) fn codegen_parser_fn(
     }
 }
 
+fn codegen_type_ref_parse(
+    type_ref_id: Option<&str>,
+    nc: &NamingContext,
+    ty: &TypeRef,
+    size: Option<&str>,
+    self_ty: &Type,
+    resolved_ty: &ResolvedType,
+    p_endian: &Ident,
+) -> TokenStream {
+    let in_parent = false;
+    match ty {
+        TypeRef::WellKnown(w) => wk_parser(w, size, p_endian),
+        TypeRef::Named(n) => {
+            let _named_ty = nc.resolve(n).unwrap();
+            user_type(nc, _named_ty, self_ty.is_root, in_parent, p_endian)
+        }
+        TypeRef::Dynamic {
+            switch_on: _,
+            cases: _,
+        } => match resolved_ty {
+            ResolvedType::Auto => {
+                let id = type_ref_id.unwrap();
+                let fg = self_ty.field_generics.get(id).expect(id);
+                if fg.external {
+                    fg.parser.to_token_stream()
+                } else {
+                    variant_parser_expr(nc, self_ty.is_root, fg, in_parent, p_endian)
+                }
+            }
+            ResolvedType::UInt { width } => match width {
+                // FIXME uses cases
+                1 => quote!(::nom::number::complete::le_u8),
+                2 => quote!(::nom::number::complete::le_u16),
+                4 => quote!(::nom::number::complete::le_u32),
+                8 => quote!(::nom::number::complete::le_u64),
+                _ => todo!(),
+            },
+        },
+    }
+}
+
 fn codegen_attr_parse(
     field: &Field,
     self_ty: &Type,
@@ -348,34 +423,15 @@ fn codegen_attr_parse(
 ) -> TokenStream {
     let f_ident = field.ident();
     let mut parser = if let Some(ty) = &attr.ty {
-        match ty {
-            TypeRef::WellKnown(w) => wk_parser(w, attr.size.as_deref(), p_endian),
-            TypeRef::Named(n) => {
-                let _named_ty = nc.resolve(n).unwrap();
-                user_type(_named_ty, self_ty.is_root)
-            }
-            TypeRef::Dynamic {
-                switch_on: _,
-                cases: _,
-            } => match field.resolved_ty() {
-                ResolvedType::Auto => {
-                    let id = attr.id.as_deref().unwrap();
-                    let fg = self_ty.field_generics.get(id).expect(id);
-                    if fg.external {
-                        fg.parser.to_token_stream()
-                    } else {
-                        variant_parser_expr(fg, false)
-                    }
-                }
-                ResolvedType::UInt { width } => match width {
-                    1 => quote!(::nom::number::complete::le_u8),
-                    2 => quote!(::nom::number::complete::le_u16),
-                    4 => quote!(::nom::number::complete::le_u32),
-                    8 => quote!(::nom::number::complete::le_u64),
-                    _ => todo!(),
-                },
-            },
-        }
+        codegen_type_ref_parse(
+            attr.id.as_deref(),
+            nc,
+            ty,
+            attr.size.as_deref(),
+            self_ty,
+            field.resolved_ty(),
+            p_endian,
+        )
     } else if let Some(contents) = &attr.contents {
         let tag = match contents {
             Contents::String(s) => quote!(#s),
@@ -407,22 +463,59 @@ fn codegen_attr_parse(
     quote!(let (#p_input, #f_ident) = #parser(#p_input)?;)
 }
 
-pub(super) fn variant_parser_expr(fg: &FieldGenerics, in_parent: bool) -> TokenStream {
+fn variant_parser_expr(
+    nc: &NamingContext,
+    is_root_parser: bool,
+    fg: &FieldGenerics,
+    in_parent: bool,
+    p_endian: &Ident,
+) -> TokenStream {
     let match_on = codegen_expr_str_with(&fg.switch_expr, in_parent);
 
     let de = quote!('a);
     let p_ty = fg.variant_type();
-    let p_enum = &fg.var_enum;
+    let p_var_enum = &fg.var_enum;
     let case_other = &fg.var_enum_other;
     let p_input = format_ident!("_input");
+
+    let p_cases: Vec<_> = fg
+        .cases
+        .iter()
+        .map(|case| {
+            let p_case_id = &case.ident;
+            let case_parser = match &case.ty {
+                TypeRef::WellKnown(w) => {
+                    wk_parser(w, None, p_endian) // FIXME: size
+                }
+                TypeRef::Named(n) => {
+                    let _named_ty = nc.resolve(n).unwrap();
+                    user_type(nc, _named_ty, is_root_parser, in_parent, p_endian)
+                }
+                TypeRef::Dynamic { .. } => todo!(),
+            };
+            let p_parser =
+                quote!(Box::new(::nom::combinator::map(#case_parser, #p_var_enum::#p_case_id)));
+            match &case.kind {
+                CaseKind::Enum(e, var) => {
+                    let p_enum = format_ident!("{}", e.to_upper_camel_case()); // FIXME: use naming context
+                    let p_var = format_ident!("_{}", var.to_uppercase());
+                    quote!(#p_enum::#p_var => #p_parser)
+                }
+                CaseKind::Bool(_) => todo!(),
+                CaseKind::Number(_) => todo!(),
+            }
+        })
+        .collect();
+
     quote!(
         // FIXME: ideally the match would be the outer expression and the parser the inner,
         // different closures generally have incompatible types.
         {
-            let __parser: &dyn Fn(&#de [u8]) -> nom::IResult<&#de [u8], #p_ty> = &match #match_on {
-                _ => |#p_input| {
-                    Ok((#p_input, #p_enum::#case_other))
-                }
+            let __parser: Box<dyn FnMut(&#de [u8]) -> nom::IResult<&#de [u8], #p_ty>> = match (#match_on) as u64 {
+                #(#p_cases,)*
+                _ => Box::new(|#p_input| {
+                    Ok((#p_input, #p_var_enum::#case_other))
+                })
             };
             __parser
         }

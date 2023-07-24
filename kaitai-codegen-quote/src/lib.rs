@@ -9,7 +9,7 @@ use std::{
 use ctx::NamingContext;
 use heck::ToUpperCamelCase;
 use kaitai_struct_types::{
-    AnyScalar, Attribute, IntTypeRef, KsySchema, StringOrArray, TypeRef, WellKnownTypeRef,
+    Attribute, IntTypeRef, KsySchema, StringOrArray, TypeRef, WellKnownTypeRef,
 };
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
@@ -90,7 +90,7 @@ fn codegen_type_ref(
     // Name of the type this is used in
     enclosing_type: &str,
     // Field name or enum variant
-    discriminant: &str,
+    discriminant: &Ident,
     field_generics: Option<&FieldGenerics>,
 ) -> TokenStream {
     match ty {
@@ -122,24 +122,9 @@ fn codegen_type_ref(
             let mut inner_set = BTreeSet::<String>::new();
 
             let enclosing_type = gen.var_enum.to_string();
-            for (case_key, case_type) in cases.iter() {
-                let mut _enum_set = BTreeSet::<String>::new();
-                let name: String = match case_key {
-                    AnyScalar::Null => todo!(),
-                    AnyScalar::Bool(true) => "True".to_owned(),
-                    AnyScalar::Bool(false) => "False".to_owned(),
-                    AnyScalar::String(s) => if let Some((_enum, part)) = s.split_once("::") {
-                        _enum_set.insert(_enum.to_owned());
-                        part
-                    } else {
-                        s
-                    }
-                    .to_upper_camel_case(),
-                    AnyScalar::UInt(i) => format!("N{}", i),
-                };
-                let n: Ident = format_ident!("{}", name);
-                let inner =
-                    codegen_type_ref(case_type, nc, tc, &enclosing_type, &name, field_generics);
+            for (i, case_type) in cases.values().enumerate() {
+                let n = gen.cases[i].ident();
+                let inner = codegen_type_ref(case_type, nc, tc, &enclosing_type, n, field_generics);
                 enum_cases.push(quote! {
                     #n(#inner),
                 });
@@ -251,7 +236,7 @@ impl Context<'_> {
         let ty = match field.resolved_ty() {
             ResolvedType::Auto => {
                 if let Some(ty) = &attr.ty {
-                    codegen_type_ref(ty, nc, tc, struct_name, orig_attr_id, fg)
+                    codegen_type_ref(ty, nc, tc, struct_name, attr_id, fg)
                 } else {
                     quote!(())
                 }
@@ -400,10 +385,25 @@ impl Context<'_> {
                     #id = #val
                 }
             });
+            let consts = spec.0.iter().map(|(key, value)| {
+                let id = &value.id;
+                let id = format_ident!("_{}", id.0.to_uppercase());
+                let val: u64 = key.parse().unwrap();
+                let doc = format!("Value: `{}`", key);
+                quote! {
+                    #[doc = #doc]
+                    pub const #id: u64 = #val;
+                }
+            });
+
             quote! {
                 #[doc = ""]
                 pub enum #id {
                     #(#values),*
+                }
+
+                impl #id {
+                    #(#consts)*
                 }
             }
         });
