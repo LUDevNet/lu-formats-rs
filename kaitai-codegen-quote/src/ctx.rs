@@ -57,13 +57,11 @@ impl NamingContext {
     pub fn import_module(&mut self, module: &Module) {
         for (s, ty) in &module.types {
             // FIXME: on demand?
-            self.types.insert(
-                format!("{}::{}", module.id, s),
-                Type {
-                    source_mod: Some(module.id.clone()),
-                    ..ty.clone()
-                },
-            );
+            self.types.insert(format!("{}::{}", module.id, s), {
+                let mut t = ty.clone();
+                t.source_mod = Some(module.id.clone());
+                t
+            });
         }
     }
 

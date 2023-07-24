@@ -91,30 +91,12 @@ fn test_u1color() {
 fn test_u1_str() {
     let bytes = vec![0x03, b'A', b'B', b'C'];
 
-    assert_eq!(
-        parse_u1_str(&bytes).finish(),
-        Ok((
-            EMPTY,
-            U1Str {
-                length: 3,
-                str: b"ABC"
-            }
-        ))
-    )
+    assert_eq!(parse_u1_str(&bytes).finish(), Ok((EMPTY, U1Str(b"ABC"))))
 }
 
 #[test]
 fn test_u4_str() {
     let bytes = vec![0x03, 0x00, 0x00, 0x00, b'A', b'B', b'C'];
 
-    assert_eq!(
-        parse_u4_str(&bytes).finish(),
-        Ok((
-            EMPTY,
-            U4Str {
-                length: 3,
-                str: b"ABC"
-            }
-        ))
-    )
+    assert_eq!(parse_u4_str(&bytes).finish(), Ok((EMPTY, U4Str(b"ABC"))))
 }

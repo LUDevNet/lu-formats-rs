@@ -242,6 +242,10 @@ fn codegen_struct_body(
     nc: &NamingContext,
     tc: &mut TyContext,
 ) -> Result<TokenStream, io::Error> {
+    if self_ty.is_var_len_str() {
+        return Ok(quote!((pub &'a [u8]);));
+    }
+
     let mut attrs = vec![];
     for (i, attr) in seq.iter().enumerate() {
         if attr.id.is_none() {
@@ -282,13 +286,40 @@ impl Context<'_> {
         let traits = &tc.traits[..];
         let id = &self_ty.ident;
 
+        let string_from_impl = self_ty.is_var_len_str().then(|| {
+            let encoding = seq[1].encoding.as_deref().unwrap().to_ascii_lowercase();
+            let input = quote!(s.0);
+            let q_impl = match encoding.as_str() {
+                "utf-16le" => quote!(char::decode_utf16(#input.chunks(2).map(|s| u16::from_le_bytes([s[0], s[1]])))
+                .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+                .collect::<String>()),
+                "utf-16be" => quote!(char::decode_utf16(#input.chunks(2).map(|s| u16::from_be_bytes([s[0], s[1]])))
+                .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+                .collect::<String>()),
+                "ascii" | "utf-8" => quote!(String::from_utf8_lossy(#input).into_owned()),
+                _ => todo!()
+            };
+            quote!(
+                impl #gen From<#id #gen> for String {
+                    fn from(s: #id #gen) -> String {
+                        #q_impl
+                    }
+                }
+            )
+        });
+        let serde_into = self_ty
+            .is_var_len_str()
+            .then(|| quote!(#[cfg_attr(feature = "serde", serde(into = "String"))]));
+
         let q = quote! {
             #q_doc
             #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
+            #serde_into
             #[derive(Debug, Clone, PartialEq)]
             pub struct #id #gen #q_body
 
             #q_parser
+            #string_from_impl
 
             #(#traits)*
         };

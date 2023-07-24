@@ -11,31 +11,6 @@ use kaitai_struct_types::{
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
-#[derive(Debug, Clone)]
-pub struct Type {
-    pub is_root: bool,
-    pub endian: Endian,
-
-    pub rust_struct_name: String,
-    pub parser_name: Ident,
-    pub source_mod: Option<Ident>,
-    pub ident: Ident,
-    pub needs_lifetime: bool,
-    /// This represents a set of generics that depend on
-    /// values in the parent.
-    pub field_generics: BTreeMap<String, FieldGenerics>,
-    pub depends_on: BTreeSet<String>,
-    pub may_depend_on: BTreeSet<String>,
-
-    pub fields: Vec<Field>,
-    pub parents: Vec<String>,
-    /// Structs that use this one, via field generics
-    pub maybe_parents: Vec<String>,
-
-    pub root_obligations: ObligationTree,
-    pub parent_obligations: ObligationTree,
-}
-
 #[derive(Default, Clone)]
 pub struct ObligationTree(BTreeMap<String, ObligationTree>);
 
@@ -82,6 +57,34 @@ impl ObligationTree {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Type {
+    pub is_root: bool,
+    pub endian: Endian,
+
+    pub rust_struct_name: String,
+    pub parser_name: Ident,
+    pub source_mod: Option<Ident>,
+    pub ident: Ident,
+    pub needs_lifetime: bool,
+    /// This represents a set of generics that depend on
+    /// values in the parent.
+    pub field_generics: BTreeMap<String, FieldGenerics>,
+    pub depends_on: BTreeSet<String>,
+    pub may_depend_on: BTreeSet<String>,
+
+    /// Whether this type encodes a variable length string
+    is_var_len_str: bool,
+
+    pub fields: Vec<Field>,
+    pub parents: Vec<String>,
+    /// Structs that use this one, via field generics
+    pub maybe_parents: Vec<String>,
+
+    pub root_obligations: ObligationTree,
+    pub parent_obligations: ObligationTree,
+}
+
 fn var_case(key: &AnyScalar, val: &TypeRef, enum_set: &mut BTreeSet<String>) -> Case {
     let (name, kind) = match key {
         AnyScalar::Null => todo!(),
@@ -122,6 +125,27 @@ fn all_unsigned<'a, I: Iterator<Item = &'a TypeRef>>(cases: I) -> Option<IntType
     }
 }
 
+fn is_var_len_str(seq: &[Attribute]) -> bool {
+    if let [a, b] = seq {
+        if a.id.as_deref() == Some("length")
+            && b.ty == Some(TypeRef::WellKnown(WellKnownTypeRef::Str))
+        {
+            let encoding = b.encoding.as_deref().unwrap();
+            let size_expr = if encoding.eq_ignore_ascii_case("utf-16le")
+                || encoding.eq_ignore_ascii_case("utf-16be")
+            {
+                "length * 2"
+            } else {
+                "length"
+            };
+            if b.size.as_deref() == Some(size_expr) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 impl Type {
     fn new_named(key: &str, seq: &[Attribute], is_root: bool, endian: Endian) -> Self {
         let rust_struct_name = key.to_upper_camel_case();
@@ -134,6 +158,8 @@ impl Type {
             rust_struct_name,
             needs_lifetime: false,
             field_generics: BTreeMap::new(),
+
+            is_var_len_str: is_var_len_str(seq),
 
             depends_on: BTreeSet::new(),
             may_depend_on: BTreeSet::new(),
@@ -163,6 +189,10 @@ impl Type {
     pub fn new_root(spec: &KsySchema) -> Self {
         let endian = spec.meta.endian.unwrap_or(Endian::LittleEndian);
         Self::new_named(&spec.meta.id.0, &spec.seq, true, endian)
+    }
+
+    pub(crate) fn is_var_len_str(&self) -> bool {
+        self.is_var_len_str
     }
 
     fn check_obligations(&mut self, expr: &Expr) {

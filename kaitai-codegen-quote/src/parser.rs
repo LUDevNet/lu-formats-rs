@@ -335,12 +335,18 @@ pub(super) fn codegen_parser_fn(
     let generics = &tc.generics[..];
 
     let id = &self_ty.ident;
+    let q_body = if self_ty.is_var_len_str() {
+        let s = &field_idents[1];
+        quote!(#id(#s))
+    } else {
+        quote!(#id {
+            #(#field_idents),*
+        })
+    };
     let q_parser_impl = quote!(
         let #p_endian = #v_endian;
         #(#parser)*
-        Ok((#p_input, #id {
-            #(#field_idents),*
-        }))
+        Ok((#p_input, #q_body))
     );
     let q_parser_attr = quote!(
         #[cfg(feature = "nom")]
