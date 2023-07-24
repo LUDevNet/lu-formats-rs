@@ -16,6 +16,7 @@ pub struct Type {
     pub is_root: bool,
     pub endian: Endian,
 
+    pub rust_struct_name: String,
     pub parser_name: Ident,
     pub source_mod: Option<Ident>,
     pub ident: Ident,
@@ -130,6 +131,7 @@ impl Type {
             parser_name: format_ident!("parse_{}", key),
             source_mod: None,
             ident: format_ident!("{}", rust_struct_name),
+            rust_struct_name,
             needs_lifetime: false,
             field_generics: BTreeMap::new(),
 

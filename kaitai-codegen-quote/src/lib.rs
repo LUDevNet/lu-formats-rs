@@ -160,6 +160,7 @@ fn codegen_type_ref(
                 #[doc = #var_enum_doc]
                 #[derive(Debug, Clone, PartialEq)]
                 #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
+                #[cfg_attr(feature = "serde", serde(untagged))] // FIXME: make conditional?
                 pub enum #v_use {
                     #(#enum_cases)*
                     #case_other
@@ -209,7 +210,6 @@ impl Context<'_> {
     fn codegen_attr(
         &self,
         nc: &NamingContext,
-        struct_name: &str,
         attr: &Attribute,
         self_ty: &Type,
         field: &Field,
@@ -238,7 +238,8 @@ impl Context<'_> {
         let ty = match field.resolved_ty() {
             ResolvedType::Auto => {
                 if let Some(ty) = &attr.ty {
-                    codegen_type_ref(ty, nc, tc, struct_name, attr_id, fg)
+                    let enclosing_type = self_ty.rust_struct_name.as_str();
+                    codegen_type_ref(ty, nc, tc, enclosing_type, attr_id, fg)
                 } else {
                     quote!(())
                 }
@@ -274,14 +275,11 @@ impl Context<'_> {
     fn codegen_struct(
         &self,
         nc: &NamingContext,
-        name: &str,
         doc: Option<&str>,
         doc_ref: Option<&StringOrArray>,
         seq: &[Attribute],
         self_ty: &Type,
     ) -> io::Result<TokenStream> {
-        let rust_struct_name = name.to_upper_camel_case();
-        let id = format_ident!("{}", rust_struct_name);
         let doc = doc.map(|d| quote!(#[doc = #d]));
         let doc_root_obligations = self_ty.root_obligations.doc("_root");
         let doc_parent_obligations = self_ty.parent_obligations.doc("_parent");
@@ -299,19 +297,25 @@ impl Context<'_> {
             tc.generics_use.push(quote!('a));
         }
 
-        let mut attrs = vec![];
-
-        for (i, attr) in seq.iter().enumerate() {
-            if attr.id.is_none() {
-                continue;
+        let q_body = {
+            let mut attrs = vec![];
+            for (i, attr) in seq.iter().enumerate() {
+                if attr.id.is_none() {
+                    continue;
+                }
+                let field = &self_ty.fields[i];
+                let attr = self.codegen_attr(nc, attr, self_ty, field, &mut tc)?;
+                attrs.push(attr);
             }
-            let field = &self_ty.fields[i];
-            attrs.push(self.codegen_attr(nc, &rust_struct_name, attr, self_ty, field, &mut tc)?);
-        }
+            quote!({
+                #(#attrs),*
+            })
+        };
 
         let gen = tc.gen();
         let traits = &tc.traits[..];
         let q_parser = parser::codegen_parser_fn(self_ty, seq, &tc, nc);
+        let id = &self_ty.ident;
 
         let q = quote! {
             #doc
@@ -324,9 +328,7 @@ impl Context<'_> {
             #doc_may_depend_on
             #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
             #[derive(Debug, Clone, PartialEq)]
-            pub struct #id #gen {
-                #(#attrs),*
-            }
+            pub struct #id #gen #q_body
 
             #q_parser
 
@@ -373,7 +375,7 @@ impl Context<'_> {
             let doc = spec.doc.as_deref();
             let doc_ref = spec.doc_ref.as_ref();
             let struct_ty = nc.resolve(key).unwrap();
-            let st = self.codegen_struct(&nc, key, doc, doc_ref, &spec.seq, struct_ty)?;
+            let st = self.codegen_struct(&nc, doc, doc_ref, &spec.seq, struct_ty)?;
             structs.push(st);
         }
 
@@ -424,7 +426,6 @@ impl Context<'_> {
             false => Some(
                 self.codegen_struct(
                     &nc,
-                    id,
                     schema.doc.as_deref(),
                     schema.doc_ref.as_ref(),
                     &schema.seq,
