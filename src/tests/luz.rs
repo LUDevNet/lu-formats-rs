@@ -1,14 +1,14 @@
 use crate::{
-    common::{Bool, Lot, QuaternionWxyz, U1Str, U1Wstr, U4Wstr},
+    common::{Bool, Lot, ObjectId, QuaternionWxyz, U1Str, U1Wstr, U4Wstr},
     files::luz::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
         parse_lnv_entry, parse_path, parse_platform_data, parse_platform_waypoint_data,
         parse_property_data, parse_racing_waypoint_data, parse_rail_waypoint_data,
         parse_spawner_data, parse_spawner_waypoint_data, parse_transition_info,
         parse_transition_point, parse_waypoint, BoundaryInfo, CameraData, CameraWaypointData, Lnv,
-        LnvEntry, NpcWaypointData, Path, PlatformData, PlatformWaypointData, PropertyData,
-        RacingWaypointData, RailWaypointData, SpawnerData, SpawnerWaypointData, TransitionInfo,
-        TransitionPoint, Waypoint, WaypointDataVariants,
+        LnvEntry, NpcWaypointData, Path, PathDataVariants, PlatformData, PlatformWaypointData,
+        PropertyData, RacingWaypointData, RailWaypointData, SpawnerData, SpawnerWaypointData,
+        TransitionInfo, TransitionPoint, Waypoint, WaypointDataVariants,
     },
 };
 
@@ -68,7 +68,7 @@ fn test_camera_data() {
             EMPTY,
             CameraData {
                 next_path: U1Wstr(&[b'A', 0x00, b'B', 0x00, b'C', 0x00]),
-                rotate_player: Some(Bool { bool: 0x01 })
+                rotate_player: Some(Bool(0x01))
             }
         ))
     );
@@ -197,7 +197,7 @@ fn test_platform_data() {
             EMPTY,
             PlatformData {
                 traveling_audio_guid: None,
-                time_based_movement: Some(Bool { bool: 0x01 })
+                time_based_movement: Some(Bool(0x01))
             }
         ))
     );
@@ -226,7 +226,7 @@ fn test_platform_waypoint_data() {
                     y: 100.0,
                     z: 7.0
                 },
-                lock_player: Bool { bool: 0x01 },
+                lock_player: Bool(0x01),
                 speed: 0.25,
                 wait: 0.75,
                 depart_audio_guid: None,
@@ -249,7 +249,7 @@ fn test_platform_waypoint_data() {
                     y: 100.0,
                     z: 7.0
                 },
-                lock_player: Bool { bool: 0x01 },
+                lock_player: Bool(0x01),
                 speed: 0.25,
                 wait: 0.75,
                 depart_audio_guid: Some(U1Wstr(b"A\0B\0C\0")),
@@ -420,8 +420,8 @@ fn test_racing_waypoint_data() {
                     y: 1.0,
                     z: 1.0
                 },
-                is_reset_node: Bool { bool: 0x01 },
-                is_non_horizontal_camera: Bool { bool: 0x00 },
+                is_reset_node: Bool(0x01),
+                is_non_horizontal_camera: Bool(0x00),
                 plane_width: 0.4,
                 plane_height: 0.5,
                 shortest_distance_to_end: 0.6
@@ -543,13 +543,11 @@ fn test_spawner_data() {
         Ok((
             EMPTY,
             SpawnerData {
-                spawned_lot: Lot { lot: 1232 },
+                spawned_lot: Lot(1232),
                 respawn_time: 3600,
                 max_to_spawn: 5,
                 num_to_maintain: 3,
-                object_id: crate::common::ObjectId {
-                    object_id: 700000000
-                },
+                object_id: ObjectId(700000000),
                 activate_on_load: None
             }
         ))
@@ -562,14 +560,12 @@ fn test_spawner_data() {
         Ok((
             EMPTY,
             SpawnerData {
-                spawned_lot: Lot { lot: 1232 },
+                spawned_lot: Lot(1232),
                 respawn_time: 3600,
                 max_to_spawn: 5,
                 num_to_maintain: 3,
-                object_id: crate::common::ObjectId {
-                    object_id: 700000000
-                },
-                activate_on_load: Some(Bool { bool: 0x00 })
+                object_id: crate::common::ObjectId(700000000),
+                activate_on_load: Some(Bool(0x00))
             }
         ))
     );
@@ -753,7 +749,7 @@ fn test_path() {
                 r#type: 0,
                 flags: 100,
                 behavior: 2,
-                data: crate::files::luz::PathDataVariants::_Other,
+                data: PathDataVariants::_Other,
                 num_waypoints: 1,
                 waypoints: vec![Waypoint::<WaypointDataVariants> {
                     position: Vector3 {

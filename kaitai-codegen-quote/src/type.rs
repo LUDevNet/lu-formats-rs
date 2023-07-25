@@ -57,6 +57,52 @@ impl ObligationTree {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeKind {
+    /// Standard Kaitai type, generated as a rust `struct` with named fields
+    Record,
+    /// Variable Length String, generated as a newtype of `&[u8]`
+    VarStr,
+    /// Wrapper for a single sequence element, generated as a newtype
+    Newtype,
+}
+
+impl TypeKind {
+    /// Detect the [TypeKind] from type ID and attribute sequence
+    fn detect(id: &str, seq: &[Attribute]) -> Self {
+        match seq {
+            [a] if a.size.is_none() && a.repeat.is_none() && a.id.as_deref() == Some(id) => {
+                TypeKind::Newtype
+            }
+            [a, b]
+                if a.id.as_deref() == Some("length")
+                    && b.ty == Some(TypeRef::WellKnown(WellKnownTypeRef::Str)) =>
+            {
+                let encoding = b.encoding.as_deref().unwrap();
+                let size_expr = if encoding.eq_ignore_ascii_case("utf-16le")
+                    || encoding.eq_ignore_ascii_case("utf-16be")
+                {
+                    "length * 2"
+                } else {
+                    "length"
+                };
+                if b.size.as_deref() == Some(size_expr) {
+                    Self::VarStr
+                } else {
+                    Self::Record
+                }
+            }
+            _ => Self::Record,
+        }
+    }
+}
+
+impl Default for TypeKind {
+    fn default() -> Self {
+        Self::Record
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Type {
     pub is_root: bool,
@@ -74,7 +120,7 @@ pub struct Type {
     pub may_depend_on: BTreeSet<String>,
 
     /// Whether this type encodes a variable length string
-    is_var_len_str: bool,
+    kind: TypeKind,
 
     pub fields: Vec<Field>,
     pub parents: Vec<String>,
@@ -125,27 +171,6 @@ fn all_unsigned<'a, I: Iterator<Item = &'a TypeRef>>(cases: I) -> Option<IntType
     }
 }
 
-fn is_var_len_str(seq: &[Attribute]) -> bool {
-    if let [a, b] = seq {
-        if a.id.as_deref() == Some("length")
-            && b.ty == Some(TypeRef::WellKnown(WellKnownTypeRef::Str))
-        {
-            let encoding = b.encoding.as_deref().unwrap();
-            let size_expr = if encoding.eq_ignore_ascii_case("utf-16le")
-                || encoding.eq_ignore_ascii_case("utf-16be")
-            {
-                "length * 2"
-            } else {
-                "length"
-            };
-            if b.size.as_deref() == Some(size_expr) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 impl Type {
     fn new_named(key: &str, seq: &[Attribute], is_root: bool, endian: Endian) -> Self {
         let rust_struct_name = key.to_upper_camel_case();
@@ -159,7 +184,7 @@ impl Type {
             needs_lifetime: false,
             field_generics: BTreeMap::new(),
 
-            is_var_len_str: is_var_len_str(seq),
+            kind: TypeKind::detect(key, seq),
 
             depends_on: BTreeSet::new(),
             may_depend_on: BTreeSet::new(),
@@ -192,7 +217,7 @@ impl Type {
     }
 
     pub(crate) fn is_var_len_str(&self) -> bool {
-        self.is_var_len_str
+        self.kind == TypeKind::VarStr
     }
 
     fn check_obligations(&mut self, expr: &Expr) {
@@ -236,36 +261,7 @@ impl Type {
                             width: type_ref.bytes(),
                         }
                     } else if let AnyScalar::String(s) = switch_on {
-                        let rust_generic_name = orig_attr_id.to_upper_camel_case();
-                        let g = format_ident!("{}", rust_generic_name);
-                        let t = format_ident!("I{}{}", self.ident, &g);
-                        let var_enum = format_ident!("{}{}Variants", self.ident, &g);
-                        let mut fg_depends_on = BTreeSet::new();
-                        let mut _enum_set = BTreeSet::<String>::new();
-
-                        let mut fg_cases = Vec::<Case>::new();
-                        for (case_key, case) in cases {
-                            let _case = var_case(case_key, case, &mut _enum_set);
-                            if let TypeRef::Named(n) = case {
-                                self.may_depend_on.insert(n.clone());
-                                fg_depends_on.insert(n.clone());
-                            }
-                            fg_cases.push(_case)
-                        }
-                        let fg = FieldGenerics {
-                            trait_: t,
-                            type_: g,
-                            var_enum,
-                            var_enum_other: format_ident!("_Other"),
-                            parser: format_ident!("parse_{}", orig_attr_id),
-                            switch_expr: s.to_string(),
-                            cases: fg_cases,
-
-                            depends_on: fg_depends_on,
-                            need_lifetime: false,
-                            external: s.starts_with("_parent."),
-                        };
-
+                        let fg = self.new_field_generics(orig_attr_id, cases, s);
                         self.field_generics.insert(orig_attr_id.to_string(), fg);
                     } else {
                         todo!()
@@ -276,6 +272,32 @@ impl Type {
             // TODO
         }
         self.fields.push(f);
+    }
+
+    fn new_field_generics(
+        &mut self,
+        orig_attr_id: &str,
+        cases: &BTreeMap<AnyScalar, TypeRef>,
+        switch_expr: &str,
+    ) -> FieldGenerics {
+        let mut fg_depends_on = BTreeSet::new();
+        let mut _enum_set = BTreeSet::<String>::new();
+        let mut fg_cases = Vec::<Case>::new();
+        for (case_key, case) in cases {
+            let _case = var_case(case_key, case, &mut _enum_set);
+            if let TypeRef::Named(n) = case {
+                self.may_depend_on.insert(n.clone());
+                fg_depends_on.insert(n.clone());
+            }
+            fg_cases.push(_case)
+        }
+        FieldGenerics::new(
+            orig_attr_id,
+            &self.ident,
+            switch_expr,
+            fg_cases,
+            fg_depends_on,
+        )
     }
 
     fn has_generics(&self) -> bool {
@@ -299,6 +321,10 @@ impl Type {
             let gen = lifetime.into_iter().chain(f_gen);
             quote!(#ty_id<#(#gen),*>)
         }
+    }
+
+    pub(crate) fn is_newtype(&self) -> bool {
+        self.kind == TypeKind::Newtype
     }
 }
 
@@ -399,6 +425,32 @@ pub struct FieldGenerics {
 }
 
 impl FieldGenerics {
+    fn new(
+        orig_attr_id: &str,
+        self_ident: &Ident,
+        switch_expr: &str,
+        fg_cases: Vec<Case>,
+        fg_depends_on: BTreeSet<String>,
+    ) -> FieldGenerics {
+        let rust_generic_name = orig_attr_id.to_upper_camel_case();
+        let g = format_ident!("{}", rust_generic_name);
+        let t = format_ident!("I{}{}", self_ident, &g);
+        let var_enum = format_ident!("{}{}Variants", self_ident, &g);
+        FieldGenerics {
+            trait_: t,
+            type_: g,
+            var_enum,
+            var_enum_other: format_ident!("_Other"),
+            parser: format_ident!("parse_{}", orig_attr_id),
+            switch_expr: switch_expr.to_string(),
+            cases: fg_cases,
+
+            depends_on: fg_depends_on,
+            need_lifetime: false,
+            external: switch_expr.starts_with("_parent."),
+        }
+    }
+
     pub fn variant_type(&self) -> TokenStream {
         let n: &Ident = &self.var_enum;
         match self.need_lifetime {

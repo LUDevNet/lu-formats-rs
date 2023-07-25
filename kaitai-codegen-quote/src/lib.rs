@@ -244,6 +244,11 @@ fn codegen_struct_body(
 ) -> Result<TokenStream, io::Error> {
     if self_ty.is_var_len_str() {
         return Ok(quote!((pub &'a [u8]);));
+    } else if self_ty.is_newtype() {
+        let attr = &seq[0];
+        let field = &self_ty.fields[0];
+        let ty = codegen_attr_ty(nc, attr, self_ty, field, tc).unwrap();
+        return Ok(quote!((pub #ty);));
     }
 
     let mut attrs = vec![];

@@ -338,6 +338,9 @@ pub(super) fn codegen_parser_fn(
     let q_body = if self_ty.is_var_len_str() {
         let s = &field_idents[1];
         quote!(#id(#s))
+    } else if self_ty.is_newtype() {
+        let s = &field_idents[0];
+        quote!(#id(#s))
     } else {
         quote!(#id {
             #(#field_idents),*
