@@ -193,6 +193,10 @@ pub struct Attribute {
     /// String encoding
     #[serde(default)]
     pub encoding: Option<String>,
+
+    /// Name of an enumeration
+    #[serde(default)]
+    pub r#enum: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]

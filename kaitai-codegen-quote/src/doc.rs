@@ -63,11 +63,16 @@ pub(crate) fn doc_attr(attr: &Attribute) -> TokenStream {
         let size_doc = format!("Encoding: `{}`", s);
         quote!(#[doc = #size_doc])
     });
+    let enum_doc = attr.r#enum.as_deref().map(|s| {
+        let size_doc = format!("Enum: `{}`", s);
+        quote!(#[doc = #size_doc])
+    });
     quote!(
         #attr_doc
         #(#[doc = #attr_doc_refs])*
         #if_doc
         #size_doc
+        #enum_doc
         #encoding_doc
         #repeat_doc
     )
