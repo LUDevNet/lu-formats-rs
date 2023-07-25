@@ -222,6 +222,7 @@ impl Type {
 
     fn check_obligations(&mut self, expr: &Expr) {
         match expr {
+            Expr::Path(_, _) => {}
             Expr::Input("_root", fields) => self.root_obligations.add(fields),
             Expr::Input("_parent", fields) => self.parent_obligations.add(fields),
             Expr::Input(_, _) | Expr::Number(_) => {}

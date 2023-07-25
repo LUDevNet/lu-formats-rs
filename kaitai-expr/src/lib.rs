@@ -5,6 +5,7 @@ use unicode_ident::{is_xid_continue, is_xid_start};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr<'a> {
     Input(&'a str, Vec<&'a str>),
+    Path(&'a str, Vec<&'a str>),
     Number(u64),
     BinOp {
         op: Op,
@@ -15,7 +16,8 @@ pub enum Expr<'a> {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Op {
-    Dot,
+    Dot,  // .
+    Path, // ::
 
     Mul,
     Div,
@@ -27,6 +29,7 @@ pub enum Op {
     LtEq,
     Lt,
     Eq,
+    NEq,
 
     And,
     Or,
@@ -41,7 +44,7 @@ pub enum Op {
 impl Op {
     fn is_left_associative(&self) -> bool {
         use Op::*;
-        matches!(self, Dot | GtEq | Gt | LtEq | Lt | Eq | And | Or)
+        matches!(self, Path | Dot | GtEq | Gt | LtEq | Lt | Eq | And | Or)
     }
 }
 
@@ -95,10 +98,16 @@ impl<'a> ExprVM<'a> {
                 let rhs = self.stack.pop().unwrap();
                 let lhs = self.stack.pop().unwrap();
                 self.stack.push(match (lhs, rhs) {
-                    (Expr::Input(l, mut vl), Expr::Input(r, mut vr)) => {
+                    (Expr::Input(l, mut vl), Expr::Input(r, mut vr)) if op == Op::Dot => {
                         vl.push(r);
                         vl.append(&mut vr);
                         Expr::Input(l, vl)
+                    }
+                    (Expr::Input(l, mut vl), Expr::Input(r, mut vr)) if op == Op::Path => {
+                        assert!(vl.is_empty());
+                        vl.push(r);
+                        vl.append(&mut vr);
+                        Expr::Path(l, vl)
                     }
                     (Expr::BinOp { op, args }, else_case) if op == Op::TernaryTrue => {
                         let cond = args.0;
@@ -232,6 +241,16 @@ impl<'a> Iterator for Lexer<'a> {
                         Some(_) | None => todo!("Error"),
                     }
                 }
+                Some('!') => {
+                    self.rest = chars.as_str();
+                    match chars.next() {
+                        Some('=') => {
+                            self.rest = chars.as_str();
+                            break Some(Token::BinOp(Op::NEq));
+                        }
+                        Some(_) | None => todo!("Error"),
+                    }
+                }
                 Some('.') => {
                     self.rest = chars.as_str();
                     break Some(Token::BinOp(Op::Dot));
@@ -250,7 +269,13 @@ impl<'a> Iterator for Lexer<'a> {
                 }
                 Some(':') => {
                     self.rest = chars.as_str();
-                    break Some(Token::BinOp(Op::TernaryFalse));
+                    break Some(Token::BinOp(match chars.next() {
+                        Some(':') => {
+                            self.rest = chars.as_str();
+                            Op::Path
+                        }
+                        _ => Op::TernaryFalse,
+                    }));
                 }
                 Some('*') => {
                     self.rest = chars.as_str();
@@ -480,5 +505,21 @@ mod tests {
     #[test]
     fn test_parse_expr_complex() {
         assert_eq!(parse_expr(COMPLEX_EXPR_STR), Ok(complex_expr()));
+    }
+
+    #[test]
+    fn test_parse_expr_enums() {
+        assert_eq!(parse_expr("stored_type != transition_type::default_sync and stored_type != transition_type::default_non_sync"), Ok(
+            Expr::BinOp { op: Op::And, args: Box::new((
+                Expr::BinOp { op: Op::NEq, args: Box::new((
+                    Expr::Input("stored_type", vec![]),
+                    Expr::Path("transition_type", vec!["default_sync"])
+                )) },
+                Expr::BinOp { op: Op::NEq, args: Box::new((
+                    Expr::Input("stored_type", vec![]),
+                    Expr::Path("transition_type", vec!["default_non_sync"])
+                )) }
+            )) }
+        ))
     }
 }
