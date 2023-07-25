@@ -109,6 +109,7 @@ pub struct Type {
     pub endian: Endian,
 
     pub rust_struct_name: String,
+    pub orig_id: String,
     pub parser_name: Ident,
     pub source_mod: Option<Ident>,
     pub ident: Ident,
@@ -179,6 +180,7 @@ impl Type {
             endian,
             parser_name: format_ident!("parse_{}", key),
             source_mod: None,
+            orig_id: key.to_owned(),
             ident: format_ident!("{}", rust_struct_name),
             rust_struct_name,
             needs_lifetime: false,

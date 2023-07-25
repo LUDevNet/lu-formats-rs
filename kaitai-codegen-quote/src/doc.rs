@@ -84,6 +84,9 @@ pub(crate) fn doc_struct(
     doc: Option<&str>,
     doc_ref: Option<&StringOrArray>,
 ) -> TokenStream {
+    let id_doc_text = format!("# Struct `{}`", &self_ty.orig_id);
+    let id_doc = quote!(#[doc = #id_doc_text]);
+
     let doc = doc.map(|d| quote!(#[doc = #d]));
     let doc_root_obligations = self_ty.root_obligations.doc("_root");
     let doc_parent_obligations = self_ty.parent_obligations.doc("_parent");
@@ -93,6 +96,7 @@ pub(crate) fn doc_struct(
     let doc_may_depend_on = doc_type_set(nc, "May depend on", &self_ty.may_depend_on);
     let doc_refs = doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
     quote!(
+        #id_doc
         #doc
         #(#[doc = #doc_refs])*
         #doc_root_obligations
