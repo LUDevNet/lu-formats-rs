@@ -13,7 +13,9 @@ use quote::{format_ident, quote, ToTokens};
 
 use crate::{
     ctx::NamingContext,
-    r#type::{ident_of, CaseKind, Field, FieldGenerics, ResolvedType, Type},
+    r#type::{
+        float_ty, ident_of, sint_ty, uint_ty, CaseKind, Field, FieldGenerics, ResolvedType, Type,
+    },
 };
 
 /// Generate the parser expression for a well-known type
@@ -251,7 +253,15 @@ pub(super) fn codegen_parser_fn(
         .fields()
         .map(|f| {
             let f_name = format_ident!("{}", f);
-            quote!(#f_name: u32,)
+            let f_ty = match nc.type_of_root_field(f).expect("root field to exist") {
+                ResolvedType::Auto => todo!("{} -> _root.{}", self_ty.orig_id, f),
+                ResolvedType::UInt { width } => uint_ty(*width),
+                ResolvedType::SInt { width } => sint_ty(*width),
+                ResolvedType::Float { width } => float_ty(*width),
+                ResolvedType::Str { .. } => todo!(),
+                ResolvedType::Enum(_, _) => todo!(),
+            };
+            quote!(#f_name: #f_ty,)
         })
         .collect();
     let root_values: Vec<_> = self_ty
@@ -424,6 +434,9 @@ fn codegen_type_ref_parse(
                     }
                 }
                 ResolvedType::Enum(_, _) => panic!("Not a TypeRef::Dynamic"),
+                ResolvedType::SInt { .. } => panic!("Not a TypeRef::Dynamic"),
+                ResolvedType::Float { .. } => panic!("Not a TypeRef::Dynamic"),
+                ResolvedType::Str { .. } => panic!("Not a TypeRef::Dynamic"),
                 ResolvedType::UInt { width } => {
                     let switch_expr = match switch_on {
                         AnyScalar::Null => todo!(),
@@ -431,14 +444,7 @@ fn codegen_type_ref_parse(
                         AnyScalar::String(expr) => codegen_expr_str(expr),
                         AnyScalar::UInt(_) => todo!(),
                     };
-                    let ty = match width {
-                        // FIXME uses cases
-                        1 => quote!(u8),
-                        2 => quote!(u16),
-                        4 => quote!(u32),
-                        8 => quote!(u64),
-                        _ => todo!(),
-                    };
+                    let ty = uint_ty(*width);
                     let mut q_cases = Vec::<TokenStream>::new();
                     for (k, v) in cases {
                         let case = match k {

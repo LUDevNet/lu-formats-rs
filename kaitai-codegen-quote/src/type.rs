@@ -251,12 +251,32 @@ impl Type {
 
         if let Some(ty) = &a.ty {
             match ty {
-                TypeRef::WellKnown(WellKnownTypeRef::Str | WellKnownTypeRef::StrZ) => {
-                    self.needs_lifetime = true;
-                }
                 TypeRef::WellKnown(w) => {
                     if let Some(e) = &a.r#enum {
                         f.resolved_type = ResolvedType::Enum(e.to_string(), *w);
+                    } else {
+                        f.resolved_type = match w {
+                            WellKnownTypeRef::Unsigned(u) => {
+                                ResolvedType::UInt { width: u.bytes() }
+                            }
+                            WellKnownTypeRef::Signed(s) => ResolvedType::SInt { width: s.bytes() },
+                            WellKnownTypeRef::F4(_) => ResolvedType::Float { width: 4 },
+                            WellKnownTypeRef::F8(_) => ResolvedType::Float { width: 8 },
+                            WellKnownTypeRef::Str => {
+                                self.needs_lifetime = true;
+                                ResolvedType::Str {
+                                    encoding: (),
+                                    zero_terminator: false,
+                                }
+                            }
+                            WellKnownTypeRef::StrZ => {
+                                self.needs_lifetime = true;
+                                ResolvedType::Str {
+                                    encoding: (),
+                                    zero_terminator: true,
+                                }
+                            }
+                        }
                     }
                 }
                 TypeRef::Named(n) => {
@@ -339,6 +359,9 @@ impl Type {
 pub enum ResolvedType {
     Auto,
     UInt { width: usize },
+    SInt { width: usize },
+    Float { width: usize },
+    Str { encoding: (), zero_terminator: bool },
     Enum(String, WellKnownTypeRef),
 }
 
@@ -482,5 +505,36 @@ impl Enum {
     pub(crate) fn new(key: &str, _spec: &kaitai_struct_types::EnumSpec) -> Self {
         let ident = format_ident!("{}", key.to_upper_camel_case());
         Self { ident }
+    }
+}
+
+pub(crate) fn uint_ty(width: usize) -> TokenStream {
+    match width {
+        // FIXME uses cases
+        1 => quote!(u8),
+        2 => quote!(u16),
+        4 => quote!(u32),
+        8 => quote!(u64),
+        _ => panic!("width not supported"),
+    }
+}
+
+pub(crate) fn sint_ty(width: usize) -> TokenStream {
+    match width {
+        // FIXME uses cases
+        1 => quote!(i8),
+        2 => quote!(i16),
+        4 => quote!(i32),
+        8 => quote!(i64),
+        _ => panic!("width not supported"),
+    }
+}
+
+pub(crate) fn float_ty(width: usize) -> TokenStream {
+    match width {
+        // FIXME uses cases
+        4 => quote!(f32),
+        8 => quote!(f64),
+        _ => panic!("width not supported"),
     }
 }

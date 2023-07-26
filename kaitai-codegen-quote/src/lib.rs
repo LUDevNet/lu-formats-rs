@@ -200,13 +200,10 @@ fn codegen_attr_ty(
             }
         }
         ResolvedType::Enum(e, _) => nc.get_enum(e).unwrap().ident.to_token_stream(),
-        ResolvedType::UInt { width } => match *width {
-            1 => quote!(u8),
-            2 => quote!(u16),
-            4 => quote!(u32),
-            8 => quote!(u64),
-            _ => panic!("width not supported"),
-        },
+        ResolvedType::UInt { width } => r#type::uint_ty(*width),
+        ResolvedType::SInt { width } => r#type::sint_ty(*width),
+        ResolvedType::Float { width } => r#type::float_ty(*width),
+        ResolvedType::Str { .. } => quote!(&'a [u8]),
     };
     let ty = if let Some(_rep) = &attr.repeat {
         quote!(Vec<#ty>)

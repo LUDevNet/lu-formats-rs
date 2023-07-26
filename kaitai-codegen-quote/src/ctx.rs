@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use kaitai_struct_types::{TypeRef, WellKnownTypeRef};
 
 use crate::{
-    r#type::{Enum, ObligationTree, Type},
+    r#type::{Enum, ObligationTree, ResolvedType, Type},
     Module,
 };
 
@@ -188,5 +188,13 @@ impl NamingContext {
 
     pub(crate) fn add_enum(&mut self, key: &str, value: Enum) {
         self.enums.insert(key.to_owned(), value);
+    }
+
+    pub(crate) fn type_of_root_field(&self, name: &str) -> Option<&ResolvedType> {
+        let root = self.get_root().unwrap();
+        root.fields
+            .iter()
+            .find(|&f| f.id() == name)
+            .map(|f| f.resolved_ty())
     }
 }
