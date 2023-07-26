@@ -3,12 +3,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use kaitai_struct_types::{TypeRef, WellKnownTypeRef};
 
 use crate::{
-    r#type::{ObligationTree, Type},
+    r#type::{Enum, ObligationTree, Type},
     Module,
 };
 
 pub(super) struct NamingContext {
     types: BTreeMap<String, Type>,
+    enums: BTreeMap<String, Enum>,
     root: Option<String>,
 }
 
@@ -20,6 +21,7 @@ impl NamingContext {
     pub fn new() -> Self {
         Self {
             types: BTreeMap::new(),
+            enums: BTreeMap::new(),
             root: None,
         }
     }
@@ -178,5 +180,13 @@ impl NamingContext {
                 ty.maybe_parents = maybe_parents;
             }
         }
+    }
+
+    pub(crate) fn get_enum(&self, key: &str) -> Option<&Enum> {
+        self.enums.get(key)
+    }
+
+    pub(crate) fn add_enum(&mut self, key: &str, value: Enum) {
+        self.enums.insert(key.to_owned(), value);
     }
 }

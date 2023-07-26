@@ -160,8 +160,8 @@ impl ExprCodegen {
         match _expr {
             Expr::Path(_root, _components) => {
                 let i_enum = format_ident!("{}", _root.to_upper_camel_case());
-                let i_var = format_ident!("_{}", _components[0].to_uppercase());
-                quote!((#i_enum::#i_var as _))
+                let i_var = format_ident!("{}", _components[0].to_upper_camel_case());
+                quote!((#i_enum::#i_var))
             }
             Expr::Input(i, fields) => {
                 let mut field_iter = fields.iter();
@@ -400,6 +400,12 @@ fn codegen_type_ref_parse(
     p_endian: &Ident,
 ) -> TokenStream {
     let in_parent = false;
+    if let ResolvedType::Enum(e, w) = resolved_ty {
+        let e = nc.get_enum(e).unwrap();
+        let i_enum = &e.ident;
+        let q_parser = wk_parser(w, size, p_endian);
+        return quote!(::nom::combinator::map_res(#q_parser, #i_enum::try_from));
+    }
     match ty {
         TypeRef::WellKnown(w) => wk_parser(w, size, p_endian),
         TypeRef::Named(n) => {
@@ -417,6 +423,7 @@ fn codegen_type_ref_parse(
                         variant_parser_expr(nc, self_ty.is_root, fg, in_parent, p_endian)
                     }
                 }
+                ResolvedType::Enum(_, _) => panic!("Not a TypeRef::Dynamic"),
                 ResolvedType::UInt { width } => {
                     let switch_expr = match switch_on {
                         AnyScalar::Null => todo!(),

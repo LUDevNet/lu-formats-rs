@@ -1,14 +1,15 @@
 use crate::{
-    common::{Bool, Lot, ObjectId, QuaternionWxyz, U1Str, U1Wstr, U4Wstr},
+    common::{Bool, Boolean, Lot, ObjectId, QuaternionWxyz, U1Str, U1Wstr, U4Wstr},
     files::luz::{
         parse_boundary_info, parse_camera_data, parse_camera_waypoint_data, parse_lnv,
         parse_lnv_entry, parse_path, parse_platform_data, parse_platform_waypoint_data,
         parse_property_data, parse_racing_waypoint_data, parse_rail_waypoint_data,
         parse_spawner_data, parse_spawner_waypoint_data, parse_transition_info,
         parse_transition_point, parse_waypoint, BoundaryInfo, CameraData, CameraWaypointData, Lnv,
-        LnvEntry, NpcWaypointData, Path, PathDataVariants, PlatformData, PlatformWaypointData,
-        PropertyData, RacingWaypointData, RailWaypointData, SpawnerData, SpawnerWaypointData,
-        TransitionInfo, TransitionPoint, Waypoint, WaypointDataVariants,
+        LnvEntry, NpcWaypointData, Path, PathBehavior, PathDataVariants, PathType, PlatformData,
+        PlatformWaypointData, PropertyData, PropertyPathType, PropertyType, RacingWaypointData,
+        RailWaypointData, SpawnerData, SpawnerWaypointData, TransitionInfo, TransitionPoint,
+        Waypoint, WaypointDataVariants,
     },
 };
 
@@ -68,7 +69,7 @@ fn test_camera_data() {
             EMPTY,
             CameraData {
                 next_path: U1Wstr(&[b'A', 0x00, b'B', 0x00, b'C', 0x00]),
-                rotate_player: Some(Bool(0x01))
+                rotate_player: Some(Bool(Boolean::True))
             }
         ))
     );
@@ -197,7 +198,7 @@ fn test_platform_data() {
             EMPTY,
             PlatformData {
                 traveling_audio_guid: None,
-                time_based_movement: Some(Bool(0x01))
+                time_based_movement: Some(Bool(Boolean::True))
             }
         ))
     );
@@ -226,7 +227,7 @@ fn test_platform_waypoint_data() {
                     y: 100.0,
                     z: 7.0
                 },
-                lock_player: Bool(0x01),
+                lock_player: Bool(Boolean::True),
                 speed: 0.25,
                 wait: 0.75,
                 depart_audio_guid: None,
@@ -249,7 +250,7 @@ fn test_platform_waypoint_data() {
                     y: 100.0,
                     z: 7.0
                 },
-                lock_player: Bool(0x01),
+                lock_player: Bool(Boolean::True),
                 speed: 0.25,
                 wait: 0.75,
                 depart_audio_guid: Some(U1Wstr(b"A\0B\0C\0")),
@@ -272,7 +273,7 @@ fn test_property_data() {
         Ok((
             EMPTY,
             PropertyData {
-                property_path_type: 1,
+                property_path_type: PropertyPathType::EntireZone,
                 price: 50,
                 time: 100,
                 associated_zone: 1200,
@@ -297,7 +298,7 @@ fn test_property_data() {
         Ok((
             EMPTY,
             PropertyData {
-                property_path_type: 1,
+                property_path_type: PropertyPathType::EntireZone,
                 price: 50,
                 time: 100,
                 associated_zone: 1200,
@@ -320,13 +321,13 @@ fn test_property_data() {
         Ok((
             EMPTY,
             PropertyData {
-                property_path_type: 1,
+                property_path_type: PropertyPathType::EntireZone,
                 price: 50,
                 time: 100,
                 associated_zone: 1200,
                 name: Some(U1Wstr(b"N\0a\0m\0e\0")),
                 description: Some(U4Wstr(b"D\0e\0s\0c\0r\0")),
-                property_type: Some(2),
+                property_type: Some(PropertyType::Lup),
                 clone_limit: None,
                 reputation_multiplier: None,
                 period_type: None,
@@ -345,13 +346,13 @@ fn test_property_data() {
         Ok((
             EMPTY,
             PropertyData {
-                property_path_type: 1,
+                property_path_type: PropertyPathType::EntireZone,
                 price: 50,
                 time: 100,
                 associated_zone: 1200,
                 name: Some(U1Wstr(b"N\0a\0m\0e\0")),
                 description: Some(U4Wstr(b"D\0e\0s\0c\0r\0")),
-                property_type: Some(2),
+                property_type: Some(PropertyType::Lup),
                 clone_limit: Some(20000),
                 reputation_multiplier: Some(5.0),
                 period_type: Some(2),
@@ -375,13 +376,13 @@ fn test_property_data() {
         Ok((
             EMPTY,
             PropertyData {
-                property_path_type: 1,
+                property_path_type: PropertyPathType::EntireZone,
                 price: 50,
                 time: 100,
                 associated_zone: 1200,
                 name: Some(U1Wstr(b"N\0a\0m\0e\0")),
                 description: Some(U4Wstr(b"D\0e\0s\0c\0r\0")),
-                property_type: Some(2),
+                property_type: Some(PropertyType::Lup),
                 clone_limit: Some(20000),
                 reputation_multiplier: Some(5.0),
                 period_type: Some(2),
@@ -420,8 +421,8 @@ fn test_racing_waypoint_data() {
                     y: 1.0,
                     z: 1.0
                 },
-                is_reset_node: Bool(0x01),
-                is_non_horizontal_camera: Bool(0x00),
+                is_reset_node: Bool(Boolean::True),
+                is_non_horizontal_camera: Bool(Boolean::False),
                 plane_width: 0.4,
                 plane_height: 0.5,
                 shortest_distance_to_end: 0.6
@@ -565,7 +566,7 @@ fn test_spawner_data() {
                 max_to_spawn: 5,
                 num_to_maintain: 3,
                 object_id: crate::common::ObjectId(700000000),
-                activate_on_load: Some(Bool(0x00))
+                activate_on_load: Some(Bool(Boolean::False))
             }
         ))
     );
@@ -746,9 +747,9 @@ fn test_path() {
                 version: 1,
                 name: U1Wstr(b"N\0a\0m\0e\0"),
                 type_name: Some(U1Wstr(b"A\0Z\0")),
-                r#type: 0,
+                r#type: PathType::Npc,
                 flags: 100,
-                behavior: 2,
+                behavior: PathBehavior::Once,
                 data: PathDataVariants::_Other,
                 num_waypoints: 1,
                 waypoints: vec![Waypoint::<WaypointDataVariants> {

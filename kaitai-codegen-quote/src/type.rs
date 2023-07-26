@@ -254,7 +254,11 @@ impl Type {
                 TypeRef::WellKnown(WellKnownTypeRef::Str | WellKnownTypeRef::StrZ) => {
                     self.needs_lifetime = true;
                 }
-                TypeRef::WellKnown(_) => {}
+                TypeRef::WellKnown(w) => {
+                    if let Some(e) = &a.r#enum {
+                        f.resolved_type = ResolvedType::Enum(e.to_string(), *w);
+                    }
+                }
                 TypeRef::Named(n) => {
                     self.depends_on.insert(n.clone());
                 }
@@ -335,6 +339,7 @@ impl Type {
 pub enum ResolvedType {
     Auto,
     UInt { width: usize },
+    Enum(String, WellKnownTypeRef),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -467,5 +472,15 @@ impl FieldGenerics {
             false => None,
             true => Some(quote!(<'a>)),
         }
+    }
+}
+
+pub struct Enum {
+    pub ident: Ident,
+}
+impl Enum {
+    pub(crate) fn new(key: &str, _spec: &kaitai_struct_types::EnumSpec) -> Self {
+        let ident = format_ident!("{}", key.to_upper_camel_case());
+        Self { ident }
     }
 }

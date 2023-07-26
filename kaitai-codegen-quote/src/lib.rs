@@ -10,9 +10,9 @@ use heck::ToUpperCamelCase;
 use kaitai_struct_types::{
     Attribute, IntTypeRef, KsySchema, StringOrArray, TypeRef, WellKnownTypeRef,
 };
-use proc_macro2::{Ident, TokenStream};
-use quote::{format_ident, quote};
-use r#type::{Field, FieldGenerics, ResolvedType, Type};
+use proc_macro2::{Ident, Literal, TokenStream};
+use quote::{format_ident, quote, ToTokens};
+use r#type::{Enum, Field, FieldGenerics, ResolvedType, Type};
 
 mod ctx;
 mod doc;
@@ -199,6 +199,7 @@ fn codegen_attr_ty(
                 quote!(())
             }
         }
+        ResolvedType::Enum(e, _) => nc.get_enum(e).unwrap().ident.to_token_stream(),
         ResolvedType::UInt { width } => match *width {
             1 => quote!(u8),
             2 => quote!(u16),
@@ -353,6 +354,11 @@ impl Context<'_> {
             nc.import_module(module);
         }
 
+        for (key, spec) in &schema.enums {
+            let r#enum = Enum::new(key, spec);
+            nc.add_enum(key, r#enum);
+        }
+
         // First stage analysis
         let _root_ty = Type::new_root(schema);
         let root_endian = _root_ty.endian;
@@ -375,16 +381,22 @@ impl Context<'_> {
 
         let enums = schema.enums.iter().map(|(name, spec)| {
             let id = format_ident!("{}", name.to_upper_camel_case());
-            let values = spec.0.iter().map(|(key, value)| {
-                let id = &value.id;
-                let id = format_ident!("{}", id.0.to_upper_camel_case());
-                let val: isize = key.parse().unwrap();
+            let mut matches = Vec::<TokenStream>::new();
+            let mut values = Vec::<TokenStream>::new();
+
+            for (key, value) in &spec.0 {
+                let var_id = &value.id;
+                let var_id = format_ident!("{}", var_id.0.to_upper_camel_case());
+                let val = Literal::isize_unsuffixed(key.parse().unwrap());
                 let doc = format!("Value: `{}`", key);
-                quote! {
+                values.push(quote! {
                     #[doc = #doc]
-                    #id = #val
-                }
-            });
+                    #var_id = #val
+                });
+                matches.push(quote!(
+                    #val => Ok(Self::#var_id)
+                ))
+            }
             let consts = spec.0.iter().map(|(key, value)| {
                 let id = &value.id;
                 let id = format_ident!("_{}", id.0.to_uppercase());
@@ -398,8 +410,32 @@ impl Context<'_> {
 
             quote! {
                 #[doc = ""]
+                #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+                #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
                 pub enum #id {
                     #(#values),*
+                }
+
+                impl ::std::convert::TryFrom<u32> for #id {
+                    type Error = ();
+
+                    fn try_from(v: u32) -> Result<Self, Self::Error> {
+                        match v {
+                            #(#matches,)*
+                            _ => Err(())
+                        }
+                    }
+                }
+
+                impl ::std::convert::TryFrom<u8> for #id {
+                    type Error = ();
+
+                    fn try_from(v: u8) -> Result<Self, Self::Error> {
+                        match v {
+                            #(#matches,)*
+                            _ => Err(())
+                        }
+                    }
                 }
 
                 impl #id {
