@@ -86,6 +86,15 @@ pub struct Context<'a> {
     pub out_dir: &'a Path,
 }
 
+fn codegen_named_ty(nc: &NamingContext, n: &str) -> TokenStream {
+    let ty = nc.resolve(n).unwrap();
+    let mut q_ty = ty.token_stream();
+    if let Some(src) = &ty.source_mod {
+        q_ty = quote!(#src::#q_ty);
+    }
+    q_ty
+}
+
 fn codegen_type_ref(
     ty: &TypeRef,
     nc: &NamingContext,
@@ -98,14 +107,7 @@ fn codegen_type_ref(
 ) -> TokenStream {
     match ty {
         TypeRef::WellKnown(wktr) => quote_wk_typeref(*wktr),
-        TypeRef::Named(n) => {
-            let ty = nc.resolve(n).unwrap();
-            let mut q_ty = ty.token_stream();
-            if let Some(src) = &ty.source_mod {
-                q_ty = quote!(#src::#q_ty);
-            }
-            q_ty
-        }
+        TypeRef::Named(n) => codegen_named_ty(nc, n),
         TypeRef::Dynamic {
             switch_on: _,
             cases,
@@ -191,7 +193,7 @@ fn codegen_attr_ty(
     let orig_attr_id = field.id();
     let fg = self_ty.field_generics.get(orig_attr_id);
     let ty = match field.resolved_ty() {
-        ResolvedType::Auto => {
+        ResolvedType::Dynamic(_, _) => {
             if let Some(ty) = &attr.ty {
                 let enclosing_type = self_ty.rust_struct_name.as_str();
                 codegen_type_ref(ty, nc, tc, enclosing_type, attr_id, fg)
@@ -199,10 +201,12 @@ fn codegen_attr_ty(
                 quote!(())
             }
         }
+        ResolvedType::Magic => quote!(()),
+        ResolvedType::User(n) => codegen_named_ty(nc, n),
         ResolvedType::Enum(e, _) => nc.get_enum(e).unwrap().ident.to_token_stream(),
-        ResolvedType::UInt { width } => r#type::uint_ty(*width),
-        ResolvedType::SInt { width } => r#type::sint_ty(*width),
-        ResolvedType::Float { width } => r#type::float_ty(*width),
+        ResolvedType::UInt { width, .. } => r#type::uint_ty(*width),
+        ResolvedType::SInt { width, .. } => r#type::sint_ty(*width),
+        ResolvedType::Float { width, .. } => r#type::float_ty(*width),
         ResolvedType::Str { .. } => quote!(&'a [u8]),
     };
     let ty = if let Some(_rep) = &attr.repeat {

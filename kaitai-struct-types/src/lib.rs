@@ -471,6 +471,14 @@ impl IntTypeRef {
             IntTypeRef::Int8(_) => 8,
         }
     }
+
+    /// Get the endian spec for this int type ref
+    pub fn endian(&self) -> EndianSpec {
+        match self {
+            IntTypeRef::Int1 => EndianSpec::Implicit,
+            IntTypeRef::Int2(e) | IntTypeRef::Int4(e) | IntTypeRef::Int8(e) => *e,
+        }
+    }
 }
 
 /// Well known [TypeRef]s

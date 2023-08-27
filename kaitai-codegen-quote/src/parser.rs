@@ -18,6 +18,50 @@ use crate::{
     },
 };
 
+pub fn sint_parser(width: usize, endian: EndianSpec, p_endian: &Ident) -> TokenStream {
+    match (width, endian) {
+        (1, _) => quote!(::nom::number::complete::i8(#p_endian)),
+        (2, EndianSpec::Implicit) => quote!(::nom::number::complete::i16(#p_endian)),
+        (2, EndianSpec::Little) => quote!(::nom::number::complete::le_i16),
+        (2, EndianSpec::Big) => quote!(::nom::number::complete::be_i16),
+        (4, EndianSpec::Implicit) => quote!(::nom::number::complete::i32(#p_endian)),
+        (4, EndianSpec::Little) => quote!(::nom::number::complete::le_i32),
+        (4, EndianSpec::Big) => quote!(::nom::number::complete::be_i32),
+        (8, EndianSpec::Implicit) => quote!(::nom::number::complete::i64(#p_endian)),
+        (8, EndianSpec::Little) => quote!(::nom::number::complete::le_i64),
+        (8, EndianSpec::Big) => quote!(::nom::number::complete::be_i64),
+        _ => panic!(),
+    }
+}
+
+pub fn uint_parser(width: usize, endian: EndianSpec, p_endian: &Ident) -> TokenStream {
+    match (width, endian) {
+        (1, _) => quote!(::nom::number::complete::u8(#p_endian)),
+        (2, EndianSpec::Implicit) => quote!(::nom::number::complete::u16(#p_endian)),
+        (2, EndianSpec::Little) => quote!(::nom::number::complete::le_u16),
+        (2, EndianSpec::Big) => quote!(::nom::number::complete::be_u16),
+        (4, EndianSpec::Implicit) => quote!(::nom::number::complete::u32(#p_endian)),
+        (4, EndianSpec::Little) => quote!(::nom::number::complete::le_u32),
+        (4, EndianSpec::Big) => quote!(::nom::number::complete::be_u32),
+        (8, EndianSpec::Implicit) => quote!(::nom::number::complete::u64(#p_endian)),
+        (8, EndianSpec::Little) => quote!(::nom::number::complete::le_u64),
+        (8, EndianSpec::Big) => quote!(::nom::number::complete::be_u64),
+        _ => panic!(),
+    }
+}
+
+pub fn float_parser(width: usize, endian: EndianSpec, p_endian: &Ident) -> TokenStream {
+    match (width, endian) {
+        (4, EndianSpec::Implicit) => quote!(::nom::number::complete::f32(#p_endian)),
+        (4, EndianSpec::Little) => quote!(::nom::number::complete::le_f32),
+        (4, EndianSpec::Big) => quote!(::nom::number::complete::be_f32),
+        (8, EndianSpec::Implicit) => quote!(::nom::number::complete::f64(#p_endian)),
+        (8, EndianSpec::Little) => quote!(::nom::number::complete::le_f64),
+        (8, EndianSpec::Big) => quote!(::nom::number::complete::be_f64),
+        _ => panic!(),
+    }
+}
+
 /// Generate the parser expression for a well-known type
 pub fn wk_parser(w: &WellKnownTypeRef, size: Option<&str>, p_endian: &Ident) -> TokenStream {
     match w {
@@ -254,12 +298,14 @@ pub(super) fn codegen_parser_fn(
         .map(|f| {
             let f_name = format_ident!("{}", f);
             let f_ty = match nc.type_of_root_field(f).expect("root field to exist") {
-                ResolvedType::Auto => todo!("{} -> _root.{}", self_ty.orig_id, f),
-                ResolvedType::UInt { width } => uint_ty(*width),
-                ResolvedType::SInt { width } => sint_ty(*width),
-                ResolvedType::Float { width } => float_ty(*width),
+                ResolvedType::UInt { width, .. } => uint_ty(*width),
+                ResolvedType::SInt { width, .. } => sint_ty(*width),
+                ResolvedType::Float { width, .. } => float_ty(*width),
+                ResolvedType::Magic => todo!(),
                 ResolvedType::Str { .. } => todo!(),
                 ResolvedType::Enum(_, _) => todo!(),
+                ResolvedType::User(_) => todo!(),
+                ResolvedType::Dynamic(_, _) => todo!(),
             };
             quote!(#f_name: #f_ty,)
         })
@@ -424,7 +470,7 @@ fn codegen_type_ref_parse(
         }
         TypeRef::Dynamic { switch_on, cases } => {
             match resolved_ty {
-                ResolvedType::Auto => {
+                ResolvedType::Dynamic(_, _) => {
                     let id = type_ref_id.unwrap();
                     let fg = self_ty.field_generics.get(id).expect(id);
                     if fg.external {
@@ -433,11 +479,13 @@ fn codegen_type_ref_parse(
                         variant_parser_expr(nc, self_ty.is_root, fg, in_parent, p_endian)
                     }
                 }
+                ResolvedType::Magic => panic!("Not a TypeRef::Dynamic"),
+                ResolvedType::User(_) => panic!("Not a TypeRef::Dynamic"),
                 ResolvedType::Enum(_, _) => panic!("Not a TypeRef::Dynamic"),
                 ResolvedType::SInt { .. } => panic!("Not a TypeRef::Dynamic"),
                 ResolvedType::Float { .. } => panic!("Not a TypeRef::Dynamic"),
                 ResolvedType::Str { .. } => panic!("Not a TypeRef::Dynamic"),
-                ResolvedType::UInt { width } => {
+                ResolvedType::UInt { width, .. } => {
                     let switch_expr = match switch_on {
                         AnyScalar::Null => todo!(),
                         AnyScalar::Bool(_) => todo!(),
@@ -551,14 +599,14 @@ fn variant_parser_expr(
         .map(|case| {
             let p_case_id = &case.ident;
             let case_parser = match &case.ty {
-                TypeRef::WellKnown(w) => {
-                    wk_parser(w, None, p_endian) // FIXME: size
-                }
-                TypeRef::Named(n) => {
+                ResolvedType::SInt { width, endian } => sint_parser(*width, *endian, p_endian),
+                ResolvedType::UInt { width, endian } => uint_parser(*width, *endian, p_endian),
+                ResolvedType::Float { width, endian } => float_parser(*width, *endian, p_endian),
+                ResolvedType::User(n) => {
                     let _named_ty = nc.resolve(n).unwrap();
                     user_type(nc, _named_ty, is_root_parser, in_parent, p_endian)
                 }
-                TypeRef::Dynamic { .. } => todo!(),
+                _ => todo!("{:?}", &case.ty),
             };
             let p_parser =
                 quote!(Box::new(::nom::combinator::map(#case_parser, #p_var_enum::#p_case_id)));

@@ -6,7 +6,8 @@ use std::{
 use heck::ToUpperCamelCase;
 use kaitai_expr::{parse_expr, Expr};
 use kaitai_struct_types::{
-    AnyScalar, Attribute, Endian, IntTypeRef, KsySchema, TypeRef, TypeSpec, WellKnownTypeRef,
+    AnyScalar, Attribute, Endian, EndianSpec, IntTypeRef, KsySchema, TypeRef, TypeSpec,
+    WellKnownTypeRef,
 };
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
@@ -132,14 +133,13 @@ pub struct Type {
     pub parent_obligations: ObligationTree,
 }
 
-fn var_case(key: &AnyScalar, val: &TypeRef, enum_set: &mut BTreeSet<String>) -> Case {
+fn var_case(key: &AnyScalar, val: &TypeRef) -> Case {
     let (name, kind) = match key {
         AnyScalar::Null => todo!(),
         AnyScalar::Bool(true) => ("True".to_owned(), CaseKind::Bool(true)),
         AnyScalar::Bool(false) => ("False".to_owned(), CaseKind::Bool(false)),
         AnyScalar::String(s) => {
             let (_enum, part) = s.split_once("::").unwrap();
-            enum_set.insert(_enum.to_owned());
             (
                 part.to_upper_camel_case(),
                 CaseKind::Enum(_enum.to_string(), part.to_string()),
@@ -147,7 +147,7 @@ fn var_case(key: &AnyScalar, val: &TypeRef, enum_set: &mut BTreeSet<String>) -> 
         }
         AnyScalar::UInt(i) => (format!("N{}", i), CaseKind::Number(*i)),
     };
-    Case::new(&name, kind, val.clone())
+    Case::new(&name, kind, ResolvedType::of_type_ref(val))
 }
 
 fn all_unsigned<'a, I: Iterator<Item = &'a TypeRef>>(cases: I) -> Option<IntTypeRef> {
@@ -242,81 +242,41 @@ impl Type {
 
     fn push_seq_elem(&mut self, a: &Attribute) {
         let orig_attr_id = a.id.as_deref().unwrap();
-        let mut f = Field::new(orig_attr_id);
+        let f = Field::new(orig_attr_id, ResolvedType::of_attribute(a));
+
+        self.needs_lifetime = self.needs_lifetime || f.resolved_type.needs_lifetime_a_priori();
+        if let ResolvedType::User(n) = &f.resolved_type {
+            self.depends_on.insert(n.to_owned());
+        }
+
+        if let ResolvedType::Dynamic(s, cases) = &f.resolved_type {
+            let fg = self.new_field_generics(orig_attr_id, cases, s);
+            self.field_generics.insert(orig_attr_id.to_string(), fg);
+        }
 
         if let Some(expr) = &a.if_expr {
             let expr = parse_expr(expr).unwrap();
             self.check_obligations(&expr);
         }
 
-        if let Some(ty) = &a.ty {
-            match ty {
-                TypeRef::WellKnown(w) => {
-                    if let Some(e) = &a.r#enum {
-                        f.resolved_type = ResolvedType::Enum(e.to_string(), *w);
-                    } else {
-                        f.resolved_type = match w {
-                            WellKnownTypeRef::Unsigned(u) => {
-                                ResolvedType::UInt { width: u.bytes() }
-                            }
-                            WellKnownTypeRef::Signed(s) => ResolvedType::SInt { width: s.bytes() },
-                            WellKnownTypeRef::F4(_) => ResolvedType::Float { width: 4 },
-                            WellKnownTypeRef::F8(_) => ResolvedType::Float { width: 8 },
-                            WellKnownTypeRef::Str => {
-                                self.needs_lifetime = true;
-                                ResolvedType::Str {
-                                    encoding: (),
-                                    zero_terminator: false,
-                                }
-                            }
-                            WellKnownTypeRef::StrZ => {
-                                self.needs_lifetime = true;
-                                ResolvedType::Str {
-                                    encoding: (),
-                                    zero_terminator: true,
-                                }
-                            }
-                        }
-                    }
-                }
-                TypeRef::Named(n) => {
-                    self.depends_on.insert(n.clone());
-                }
-                TypeRef::Dynamic { switch_on, cases } => {
-                    if let Some(type_ref) = all_unsigned(cases.values()) {
-                        f.resolved_type = ResolvedType::UInt {
-                            width: type_ref.bytes(),
-                        }
-                    } else if let AnyScalar::String(s) = switch_on {
-                        let fg = self.new_field_generics(orig_attr_id, cases, s);
-                        self.field_generics.insert(orig_attr_id.to_string(), fg);
-                    } else {
-                        todo!()
-                    }
-                }
-            }
-        } else {
-            // TODO
-        }
         self.fields.push(f);
     }
 
     fn new_field_generics(
         &mut self,
         orig_attr_id: &str,
-        cases: &BTreeMap<AnyScalar, TypeRef>,
+        cases: &[Case],
         switch_expr: &str,
     ) -> FieldGenerics {
         let mut fg_depends_on = BTreeSet::new();
         let mut _enum_set = BTreeSet::<String>::new();
         let mut fg_cases = Vec::<Case>::new();
-        for (case_key, case) in cases {
-            let _case = var_case(case_key, case, &mut _enum_set);
-            if let TypeRef::Named(n) = case {
+        for case in cases {
+            if let ResolvedType::User(n) = &case.ty {
                 self.may_depend_on.insert(n.clone());
                 fg_depends_on.insert(n.clone());
             }
-            fg_cases.push(_case)
+            fg_cases.push(case.clone())
         }
         FieldGenerics::new(
             orig_attr_id,
@@ -357,12 +317,99 @@ impl Type {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedType {
-    Auto,
-    UInt { width: usize },
-    SInt { width: usize },
-    Float { width: usize },
-    Str { encoding: (), zero_terminator: bool },
+    UInt {
+        width: usize,
+        endian: EndianSpec,
+    },
+    SInt {
+        width: usize,
+        endian: EndianSpec,
+    },
+    Float {
+        width: usize,
+        endian: EndianSpec,
+    },
+    Str {
+        encoding: (),
+        zero_terminator: bool,
+    },
     Enum(String, WellKnownTypeRef),
+    /// A named user-type
+    User(String),
+    Dynamic(String, Vec<Case>),
+    Magic,
+}
+
+impl ResolvedType {
+    fn needs_lifetime_a_priori(&self) -> bool {
+        use ResolvedType::*;
+        matches!(self, Str { .. })
+    }
+
+    fn of_well_known(w: WellKnownTypeRef) -> Self {
+        match w {
+            WellKnownTypeRef::Unsigned(u) => ResolvedType::UInt {
+                width: u.bytes(),
+                endian: u.endian(),
+            },
+            WellKnownTypeRef::Signed(s) => ResolvedType::SInt {
+                width: s.bytes(),
+                endian: s.endian(),
+            },
+            WellKnownTypeRef::F4(endian) => ResolvedType::Float { width: 4, endian },
+            WellKnownTypeRef::F8(endian) => ResolvedType::Float { width: 8, endian },
+            WellKnownTypeRef::Str => ResolvedType::Str {
+                encoding: (),
+                zero_terminator: false,
+            },
+            WellKnownTypeRef::StrZ => ResolvedType::Str {
+                encoding: (),
+                zero_terminator: true,
+            },
+        }
+    }
+
+    fn of_type_ref(a: &TypeRef) -> ResolvedType {
+        match a {
+            TypeRef::WellKnown(w) => Self::of_well_known(*w),
+            TypeRef::Named(n) => ResolvedType::User(n.to_owned()),
+            TypeRef::Dynamic { .. } => todo!(),
+        }
+    }
+
+    fn of_attribute(a: &Attribute) -> ResolvedType {
+        if let Some(ty) = &a.ty {
+            match ty {
+                TypeRef::WellKnown(w) => {
+                    if let Some(e) = &a.r#enum {
+                        ResolvedType::Enum(e.to_string(), *w)
+                    } else {
+                        Self::of_well_known(*w)
+                    }
+                }
+                TypeRef::Named(n) => ResolvedType::User(n.to_owned()),
+                TypeRef::Dynamic { switch_on, cases } => {
+                    if let Some(type_ref) = all_unsigned(cases.values()) {
+                        ResolvedType::UInt {
+                            endian: EndianSpec::Implicit, // FIXME
+                            width: type_ref.bytes(),
+                        }
+                    } else if let AnyScalar::String(s) = switch_on {
+                        ResolvedType::Dynamic(
+                            s.to_owned(),
+                            cases.iter().map(|(k, v)| var_case(k, v)).collect(),
+                        )
+                    } else {
+                        todo!()
+                    }
+                }
+            }
+        } else if a.contents.is_some() {
+            ResolvedType::Magic
+        } else {
+            todo!()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -373,19 +420,12 @@ pub struct Field {
     resolved_type: ResolvedType,
 }
 
-pub(crate) fn ident_of(id: &str) -> Ident {
-    match id {
-        "type" => format_ident!("r#type"),
-        _ => format_ident!("{}", id),
-    }
-}
-
 impl Field {
-    pub(crate) fn new(orig_attr_id: &str) -> Self {
+    pub(crate) fn new(orig_attr_id: &str, resolved_type: ResolvedType) -> Self {
         Self {
             ident: ident_of(orig_attr_id),
             id: orig_attr_id.to_owned(),
-            resolved_type: ResolvedType::Auto,
+            resolved_type,
         }
     }
 
@@ -405,6 +445,13 @@ impl Field {
     }
 }
 
+pub(crate) fn ident_of(id: &str) -> Ident {
+    match id {
+        "type" => format_ident!("r#type"),
+        _ => format_ident!("{}", id),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CaseKind {
     Enum(String, String),
@@ -416,11 +463,11 @@ pub enum CaseKind {
 pub struct Case {
     pub ident: Ident,
     pub kind: CaseKind,
-    pub ty: TypeRef,
+    pub ty: ResolvedType,
 }
 
 impl Case {
-    pub fn new(name: &str, kind: CaseKind, ty: TypeRef) -> Self {
+    pub fn new(name: &str, kind: CaseKind, ty: ResolvedType) -> Self {
         Self {
             ident: format_ident!("{}", name),
             kind,
