@@ -4,7 +4,7 @@
 
 use crate::{
     ctx::NamingContext,
-    r#type::{ident_of, uint_ty, CaseKind, Field, FieldGenerics, ResolvedType, Type},
+    r#type::{uint_ty, CaseKind, Field, FieldGenerics, ResolvedType, Type},
 };
 use heck::ToUpperCamelCase;
 use kaitai_struct_types::{
@@ -25,52 +25,15 @@ fn user_type(
     in_parent: bool,
     p_endian: &Ident,
 ) -> TokenStream {
-    fn _root_field(i: Ident) -> TokenStream {
-        quote!(_root.#i)
-    }
-
     let p = &named_ty.parser_name;
     let path = if let Some(m) = &named_ty.source_mod {
         quote!(#m::#p)
     } else {
         quote!(#p)
     };
-    let mut values: Vec<_> = named_ty
-        .root_obligations
-        .fields()
-        .map(|f| format_ident!("{}", f))
-        .map(match is_root_parser {
-            true => Ident::into_token_stream,
-            false => _root_field,
-        })
-        .collect();
-    for obligation in named_ty.parent_obligations.fields() {
-        match obligation.as_str() {
-            "_parent" => {
-                for obligation in named_ty
-                    .parent_obligations
-                    .get(obligation)
-                    .unwrap()
-                    .fields()
-                {
-                    match obligation.as_str() {
-                        "_parent" => todo!(),
-                        _ => {
-                            let i = ident_of(obligation);
-                            values.push(if in_parent {
-                                i.into_token_stream()
-                            } else {
-                                quote!(_parent.#i)
-                            });
-                        }
-                    }
-                }
-            }
-            _ => {
-                values.push(ident_of(obligation).into_token_stream());
-            }
-        }
-    }
+    let mut values = Vec::new();
+    obligations::root_obligation_values(named_ty, &mut values, is_root_parser);
+    obligations::parent_obligation_values(named_ty, &mut values, in_parent);
     for generics in named_ty.field_generics.values() {
         if generics.external {
             let variants_parser = variant_parser_expr(nc, is_root_parser, generics, true, p_endian);

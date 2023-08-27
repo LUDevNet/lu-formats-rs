@@ -1,10 +1,12 @@
+//! Parser handling of [`ObligationTree`]
+
 use heck::ToUpperCamelCase;
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 
 use crate::{
     ctx::NamingContext,
-    r#type::{float_ty, sint_ty, uint_ty, ObligationTree, ResolvedType, Type},
+    r#type::{float_ty, ident_of, sint_ty, uint_ty, ObligationTree, ResolvedType, Type},
 };
 
 pub(super) fn parent_obligation_params(
@@ -96,8 +98,8 @@ fn visit_root_obligation(
     struct_defs: &mut Vec<TokenStream>,
     nc: &NamingContext,
 ) -> TokenStream {
-    let mut obligation_fields = Vec::new();
-    let mut root_values = Vec::new();
+    let mut fields = Vec::new();
+    let mut values = Vec::new();
     for f in obligations.fields() {
         let f_name = format_ident!("{}", f);
         let mut f_is_parser_arg = true;
@@ -123,15 +125,82 @@ fn visit_root_obligation(
         if f_is_parser_arg {
             parser_args.push(quote!(#f_name: #f_ty,));
         }
-        root_values.push(f_val);
-        obligation_fields.push(quote!(#f_name: #f_ty,));
+        values.push(f_val);
+        fields.push(quote!(#f_name: #f_ty,));
     }
     struct_defs.push(quote!(
         struct #context_id {
-            #(#obligation_fields)*
+            #(#fields)*
         }
     ));
     quote!(#context_id {
-        #(#root_values)*
+        #(#values)*
     })
+}
+
+/// Get the values passed into a root obligation by the parent parser
+pub(super) fn root_obligation_values(
+    named_ty: &Type,
+    values: &mut Vec<TokenStream>,
+    is_root_parser: bool,
+) {
+    let base = match is_root_parser {
+        true => None,
+        false => Some(quote!(_root)),
+    };
+    push_root_obligation_values(&named_ty.root_obligations, values, base.as_ref());
+}
+
+fn push_root_obligation_values(
+    obligations: &ObligationTree,
+    values: &mut Vec<TokenStream>,
+    base: Option<&TokenStream>,
+) {
+    for f in obligations.fields() {
+        let f_id = format_ident!("{}", f);
+        let id = base
+            .map(|b| quote!(#b.#f_id))
+            .unwrap_or_else(|| Ident::into_token_stream(f_id));
+        let inner = obligations.get(f).unwrap();
+        if inner.is_empty() {
+            values.push(id);
+        } else {
+            push_root_obligation_values(inner, values, Some(&id))
+        }
+    }
+}
+
+/// Get the values passed into a parent obligation by the parent parser
+pub(super) fn parent_obligation_values(
+    named_ty: &Type,
+    values: &mut Vec<TokenStream>,
+    in_parent: bool,
+) {
+    for obligation in named_ty.parent_obligations.fields() {
+        match obligation.as_str() {
+            "_parent" => {
+                for obligation in named_ty
+                    .parent_obligations
+                    .get(obligation)
+                    .unwrap()
+                    .fields()
+                {
+                    match obligation.as_str() {
+                        "_parent" => todo!(),
+                        _ => {
+                            let i = ident_of(obligation);
+                            values.push(if in_parent {
+                                i.into_token_stream()
+                            } else {
+                                quote!(_parent.#i)
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {
+                values.push(ident_of(obligation).into_token_stream());
+            }
+        }
+    }
 }

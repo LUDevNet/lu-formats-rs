@@ -12,6 +12,16 @@ use kaitai_struct_types::{
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
+/// Grouping of values outside the current struct/parser.
+///
+/// These are values that need to be known before parsing can begin.
+///
+/// Each type can have `_root` and `_parent` obligation trees.
+///
+/// - Root Obligations are passed on to parent parsers unchanged until they reach
+///   the top level parser.
+/// - Parent Obligations are passed on with one `_parent` removed until
+///   the obligations refer to local fields.
 #[derive(Default, Clone)]
 pub struct ObligationTree(BTreeMap<String, ObligationTree>);
 
