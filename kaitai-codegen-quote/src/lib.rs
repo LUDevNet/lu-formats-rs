@@ -207,7 +207,7 @@ fn codegen_attr_ty(
         ResolvedType::UInt { width, .. } => r#type::uint_ty(*width),
         ResolvedType::SInt { width, .. } => r#type::sint_ty(*width),
         ResolvedType::Float { width, .. } => r#type::float_ty(*width),
-        ResolvedType::Str { .. } => quote!(&'a [u8]),
+        ResolvedType::Str { .. } | ResolvedType::Bytes { .. } => quote!(&'a [u8]),
     };
     let ty = if let Some(_rep) = &attr.repeat {
         quote!(Vec<#ty>)

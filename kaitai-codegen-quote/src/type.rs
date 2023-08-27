@@ -313,6 +313,16 @@ impl Type {
     pub(crate) fn is_newtype(&self) -> bool {
         self.kind == TypeKind::Newtype
     }
+
+    /// Find a field by its identifier
+    pub(crate) fn find_field(&self, name: &str) -> Option<&Field> {
+        self.fields.iter().find(|&f| f.id() == name)
+    }
+
+    /// For a given `id` within this type, find the ([`ResolvedType`]) that represents type.
+    pub(crate) fn type_of_field(&self, name: &str) -> Option<&ResolvedType> {
+        self.find_field(name).map(Field::resolved_ty)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -333,6 +343,9 @@ pub enum ResolvedType {
         encoding: (),
         zero_terminator: bool,
     },
+    Bytes {
+        size_expr: String,
+    },
     Enum(String, WellKnownTypeRef),
     /// A named user-type
     User(String),
@@ -343,7 +356,7 @@ pub enum ResolvedType {
 impl ResolvedType {
     fn needs_lifetime_a_priori(&self) -> bool {
         use ResolvedType::*;
-        matches!(self, Str { .. })
+        matches!(self, Str { .. } | Bytes { .. })
     }
 
     fn of_well_known(w: WellKnownTypeRef) -> Self {
@@ -406,8 +419,12 @@ impl ResolvedType {
             }
         } else if a.contents.is_some() {
             ResolvedType::Magic
+        } else if let Some(size_expr) = a.size.as_deref() {
+            ResolvedType::Bytes {
+                size_expr: size_expr.to_owned(),
+            }
         } else {
-            todo!()
+            todo!("{:?}", a)
         }
     }
 }
