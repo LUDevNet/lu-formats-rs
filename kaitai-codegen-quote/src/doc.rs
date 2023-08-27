@@ -93,7 +93,11 @@ pub(crate) fn doc_struct(
     let doc_parents = doc_type_list(nc, "Parents", &self_ty.parents);
     let doc_maybe_parents = doc_type_list(nc, "Maybe parents", &self_ty.maybe_parents);
     let doc_depends_on = doc_type_set(nc, "Depends on", &self_ty.depends_on);
-    let doc_may_depend_on = doc_type_set(nc, "May depend on", &self_ty.may_depend_on);
+    let mut doc_may_depend_on = Vec::new();
+    for (field, deps) in &self_ty.may_depend_on {
+        let title = format!("Field '{}' may depend on", field);
+        doc_may_depend_on.push(doc_type_set(nc, &title, deps));
+    }
     let doc_refs = doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
     quote!(
         #id_doc
@@ -104,6 +108,6 @@ pub(crate) fn doc_struct(
         #doc_parents
         #doc_maybe_parents
         #doc_depends_on
-        #doc_may_depend_on
+        #(#doc_may_depend_on)*
     )
 }

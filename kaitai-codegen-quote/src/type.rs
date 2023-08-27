@@ -129,7 +129,9 @@ pub struct Type {
     /// values in the parent.
     pub field_generics: BTreeMap<String, FieldGenerics>,
     pub depends_on: BTreeSet<String>,
-    pub may_depend_on: BTreeSet<String>,
+
+    /// Map from field name to dependency
+    pub may_depend_on: BTreeMap<String, BTreeSet<String>>,
 
     /// Whether this type encodes a variable length string
     kind: TypeKind,
@@ -206,7 +208,7 @@ impl Type {
             kind: TypeKind::detect(key, seq),
 
             depends_on: BTreeSet::new(),
-            may_depend_on: BTreeSet::new(),
+            may_depend_on: BTreeMap::new(),
 
             instances: Vec::new(),
             fields: Vec::new(),
@@ -285,6 +287,21 @@ impl Type {
 
     fn push_instances_elem(&mut self, key: &str, value: &Attribute) {
         let f = Field::new(key, ResolvedType::of_attribute(value));
+        if let ResolvedType::User(n) = &f.resolved_type {
+            self.may_depend_on
+                .entry(key.to_owned())
+                .or_default()
+                .insert(n.to_owned());
+        } else if let ResolvedType::Dynamic(_s, cases) = &f.resolved_type {
+            for case in cases {
+                if let ResolvedType::User(n) = &case.ty {
+                    self.may_depend_on
+                        .entry(key.to_owned())
+                        .or_default()
+                        .insert(n.to_owned());
+                }
+            }
+        }
         self.instances.push(f);
     }
 
@@ -299,7 +316,10 @@ impl Type {
         let mut fg_cases = Vec::<Case>::new();
         for case in cases {
             if let ResolvedType::User(n) = &case.ty {
-                self.may_depend_on.insert(n.clone());
+                self.may_depend_on
+                    .entry(orig_attr_id.to_owned())
+                    .or_default()
+                    .insert(n.to_owned());
                 fg_depends_on.insert(n.clone());
             }
             fg_cases.push(case.clone())

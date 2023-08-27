@@ -69,21 +69,17 @@ impl NamingContext {
 
     fn merge_root_obligations<'a>(
         &'a self,
+        path: &mut Vec<String>,
         id: &'a str,
         t: &'a Type,
         in_stack: &mut BTreeSet<&'a str>,
         results: &mut BTreeMap<String, ObligationTree>,
     ) -> ObligationTree {
         let mut o = t.root_obligations.clone();
-        for list in [&t.depends_on, &t.may_depend_on] {
-            for dep in list {
-                let t = self.resolve(dep).expect(dep);
-                if t.source_mod.is_none() && !in_stack.contains(dep.as_str()) {
-                    in_stack.insert(dep.as_str());
-                    o.union(&self.merge_root_obligations(dep, t, in_stack, results));
-                    in_stack.remove(dep.as_str());
-                }
-            }
+        //  &t.may_depend_on
+        self.merge_root_obligation(&t.depends_on, in_stack, &mut o, path, results);
+        for deps in t.may_depend_on.values() {
+            self.merge_root_obligation(deps, in_stack, &mut o, path, results);
         }
         if !t.is_root {
             results.entry(id.to_owned()).or_default().union(&o);
@@ -91,14 +87,33 @@ impl NamingContext {
         o
     }
 
+    fn merge_root_obligation<'a>(
+        &'a self,
+        list: &'a BTreeSet<String>,
+        in_stack: &mut BTreeSet<&'a str>,
+        o: &mut ObligationTree,
+        path: &mut Vec<String>,
+        results: &mut BTreeMap<String, ObligationTree>,
+    ) {
+        for dep in list {
+            let t = self.resolve(dep).expect(dep);
+            if t.source_mod.is_none() && !in_stack.contains(dep.as_str()) {
+                in_stack.insert(dep.as_str());
+                o.union(&self.merge_root_obligations(path, dep, t, in_stack, results));
+                in_stack.remove(dep.as_str());
+            }
+        }
+    }
+
     /// Ensures that root obligations (parser paramters)
     /// are attached to all parents.
     fn propagate_root_obligations(&mut self) {
         let root_id = self.root.as_ref().unwrap().as_str();
         let root = self.get_root().unwrap();
+        let mut path = vec!["_root".to_owned()];
         let mut in_stack = BTreeSet::new();
         let mut results = BTreeMap::new();
-        let _ = self.merge_root_obligations(root_id, root, &mut in_stack, &mut results);
+        let _ = self.merge_root_obligations(&mut path, root_id, root, &mut in_stack, &mut results);
 
         // After analysis, overwrite all the types
         for (name, res) in results {
@@ -121,7 +136,7 @@ impl NamingContext {
                 for dep in &ty.depends_on {
                     dependencies.entry(dep.clone()).or_default().push(s.clone());
                 }
-                for dep in &ty.may_depend_on {
+                for dep in ty.may_depend_on.values().flatten() {
                     maybe_dependencies
                         .entry(dep.clone())
                         .or_default()
