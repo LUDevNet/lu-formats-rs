@@ -70,25 +70,21 @@ pub(super) fn root_obligation_params(
     if self_ty.root_obligations.is_empty() {
         return None;
     }
-    let mut root_values = Vec::new();
     let mut struct_defs = Vec::new();
     let context_ty = nc.get_root().unwrap();
     let context_id = format_ident!("_Root");
     let obligations = &self_ty.root_obligations;
-    visit_root_obligation(
+    let val = visit_root_obligation(
         obligations,
         context_ty,
         &context_id,
         parser_args,
-        &mut root_values,
         &mut struct_defs,
         nc,
     );
     Some(quote!(
         #(#struct_defs)*
-        let _root = _Root {
-            #(#root_values)*
-        };
+        let _root = #val;
     ))
 }
 
@@ -97,11 +93,11 @@ fn visit_root_obligation(
     context_ty: &Type,
     context_id: &Ident,
     parser_args: &mut Vec<TokenStream>,
-    root_values: &mut Vec<TokenStream>,
     struct_defs: &mut Vec<TokenStream>,
     nc: &NamingContext,
-) {
+) -> TokenStream {
     let mut obligation_fields = Vec::new();
+    let mut root_values = Vec::new();
     for f in obligations.fields() {
         let f_name = format_ident!("{}", f);
         let mut f_is_parser_arg = true;
@@ -118,19 +114,9 @@ fn visit_root_obligation(
                 let id = format_ident!("{}{}", context_id, name.to_upper_camel_case());
                 f_is_parser_arg = false;
                 let inner = obligations.get(f).unwrap();
-                let mut inner_values = Vec::new();
                 let inner_ty = nc.resolve(name).unwrap();
-                visit_root_obligation(
-                    inner,
-                    inner_ty,
-                    &id,
-                    parser_args,
-                    &mut inner_values,
-                    struct_defs,
-                    nc,
-                );
-
-                (id.into_token_stream(), quote!(todo!()))
+                let val = visit_root_obligation(inner, inner_ty, &id, parser_args, struct_defs, nc);
+                (id.into_token_stream(), quote!(#f_name: #val))
             }
             ResolvedType::Dynamic(_, _) => todo!(),
         };
@@ -144,5 +130,8 @@ fn visit_root_obligation(
         struct #context_id {
             #(#obligation_fields)*
         }
-    ))
+    ));
+    quote!(#context_id {
+        #(#root_values)*
+    })
 }

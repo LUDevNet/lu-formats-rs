@@ -125,6 +125,7 @@ pub struct Type {
     kind: TypeKind,
 
     pub fields: Vec<Field>,
+    pub instances: Vec<Field>,
     pub parents: Vec<String>,
     /// Structs that use this one, via field generics
     pub maybe_parents: Vec<String>,
@@ -173,7 +174,13 @@ fn all_unsigned<'a, I: Iterator<Item = &'a TypeRef>>(cases: I) -> Option<IntType
 }
 
 impl Type {
-    fn new_named(key: &str, seq: &[Attribute], is_root: bool, endian: Endian) -> Self {
+    fn new_named(
+        key: &str,
+        seq: &[Attribute],
+        instances: &BTreeMap<String, Attribute>,
+        is_root: bool,
+        endian: Endian,
+    ) -> Self {
         let rust_struct_name = key.to_upper_camel_case();
         let mut t = Self {
             is_root,
@@ -191,6 +198,7 @@ impl Type {
             depends_on: BTreeSet::new(),
             may_depend_on: BTreeSet::new(),
 
+            instances: Vec::new(),
             fields: Vec::new(),
             parents: Vec::new(),
             maybe_parents: Vec::new(),
@@ -201,6 +209,9 @@ impl Type {
         for a in seq {
             t.push_seq_elem(a);
         }
+        for (k, v) in instances {
+            t.push_instances_elem(k, v);
+        }
         t
     }
 
@@ -210,12 +221,12 @@ impl Type {
             .as_ref()
             .and_then(|m| m.endian)
             .unwrap_or(root_endian);
-        Self::new_named(key, &spec.seq, false, endian)
+        Self::new_named(key, &spec.seq, &spec.instances, false, endian)
     }
 
     pub fn new_root(spec: &KsySchema) -> Self {
         let endian = spec.meta.endian.unwrap_or(Endian::LittleEndian);
-        Self::new_named(&spec.meta.id.0, &spec.seq, true, endian)
+        Self::new_named(&spec.meta.id.0, &spec.seq, &spec.instances, true, endian)
     }
 
     pub(crate) fn is_var_len_str(&self) -> bool {
@@ -260,6 +271,11 @@ impl Type {
         }
 
         self.fields.push(f);
+    }
+
+    fn push_instances_elem(&mut self, key: &str, value: &Attribute) {
+        let f = Field::new(key, ResolvedType::of_attribute(value));
+        self.instances.push(f);
     }
 
     fn new_field_generics(
@@ -316,7 +332,10 @@ impl Type {
 
     /// Find a field by its identifier
     pub(crate) fn find_field(&self, name: &str) -> Option<&Field> {
-        self.fields.iter().find(|&f| f.id() == name)
+        self.fields
+            .iter()
+            .chain(self.instances.iter())
+            .find(|&f| f.id() == name)
     }
 
     /// For a given `id` within this type, find the ([`ResolvedType`]) that represents type.

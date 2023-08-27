@@ -68,7 +68,7 @@ fn main() {
     //let (_g_path, g_id) = ctx.run("files", "g").unwrap(); // needs bit parsers
     let (_kfm_path, kfm_id) = ctx.run("files", "kfm").unwrap();
     let (_luz_path, luz_id) = ctx.run("files", "luz").unwrap();
-    let (_lvl_path, lvl_id) = ctx.run("files", "lvl").unwrap(); // needs instances
+    //let (_lvl_path, lvl_id) = ctx.run("files", "lvl").unwrap(); // needs instances
     let (_pki_path, pki_id) = ctx.run("files", "pki").unwrap();
 
     let files_mod = quote!(
@@ -76,7 +76,7 @@ fn main() {
         //pub mod #g_id;
         pub mod #kfm_id;
         pub mod #luz_id;
-        pub mod #lvl_id;
+        //pub mod #lvl_id;
         pub mod #pki_id;
     );
     let mut files_mod_file = File::create(files_mod_path).unwrap();

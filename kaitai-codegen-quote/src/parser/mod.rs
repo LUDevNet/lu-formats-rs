@@ -293,8 +293,11 @@ fn codegen_attr_parse(
         };
         // FIXME: different value?
         quote!(::nom::combinator::value((), ::nom::bytes::complete::tag(#tag)))
+    } else if let Some(size_expr) = &attr.size {
+        let size = expr::codegen_expr_str(size_expr);
+        quote!(::nom::bytes::complete::take(#size))
     } else {
-        quote!(::nom::number::complete::le_u32)
+        todo!("{:?}", attr);
     };
     if let Some(_r) = &attr.repeat {
         parser = match _r {
