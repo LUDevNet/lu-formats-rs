@@ -64,6 +64,10 @@ impl ObligationTree {
         self.inner.is_empty()
     }
 
+    pub fn local_or_all_local(&self) -> bool {
+        self.local || (!self.is_empty() && self.inner.values().all(Self::local_or_all_local))
+    }
+
     pub fn all_local(&self) -> bool {
         self.inner.values().all(Self::is_local)
     }

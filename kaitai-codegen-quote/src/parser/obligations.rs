@@ -69,7 +69,7 @@ pub(super) fn root_obligation_params(
     nc: &NamingContext,
     parser_args: &mut Vec<TokenStream>,
 ) -> Option<TokenStream> {
-    if self_ty.root_obligations.is_empty() || self_ty.root_obligations.all_local() {
+    if self_ty.root_obligations.is_empty() || self_ty.root_obligations.local_or_all_local() {
         return None;
     }
     let mut struct_defs = Vec::new();
