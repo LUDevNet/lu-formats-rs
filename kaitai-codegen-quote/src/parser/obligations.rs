@@ -69,7 +69,7 @@ pub(super) fn root_obligation_params(
     nc: &NamingContext,
     parser_args: &mut Vec<TokenStream>,
 ) -> Option<TokenStream> {
-    if self_ty.root_obligations.is_empty() {
+    if self_ty.root_obligations.is_empty() || self_ty.root_obligations.all_local() {
         return None;
     }
     let mut struct_defs = Vec::new();
@@ -100,7 +100,7 @@ fn visit_root_obligation(
 ) -> TokenStream {
     let mut fields = Vec::new();
     let mut values = Vec::new();
-    for f in obligations.fields() {
+    for (f, inner) in obligations.entries() {
         let f_name = format_ident!("{}", f);
         let mut f_is_parser_arg = true;
         let mut _dbg = format!("{}::{}", context_id, f);
@@ -115,7 +115,6 @@ fn visit_root_obligation(
             ResolvedType::User(name) => {
                 let id = format_ident!("{}{}", context_id, name.to_upper_camel_case());
                 f_is_parser_arg = false;
-                let inner = obligations.get(f).unwrap();
                 let inner_ty = nc.resolve(name).unwrap();
                 let val = visit_root_obligation(inner, inner_ty, &id, parser_args, struct_defs, nc);
                 (id.into_token_stream(), quote!(#f_name: #val))
@@ -128,7 +127,9 @@ fn visit_root_obligation(
         values.push(f_val);
         fields.push(quote!(#f_name: #f_ty,));
     }
+    let _doc = format!("local: {:?}", obligations.is_local());
     struct_defs.push(quote!(
+        #[doc = #_doc]
         struct #context_id {
             #(#fields)*
         }
@@ -156,7 +157,10 @@ fn push_root_obligation_values(
     values: &mut Vec<TokenStream>,
     base: Option<&TokenStream>,
 ) {
-    for f in obligations.fields() {
+    for (f, inner) in obligations.entries() {
+        if inner.is_local() {
+            continue;
+        }
         let f_id = format_ident!("{}", f);
         let id = base
             .map(|b| quote!(#b.#f_id))

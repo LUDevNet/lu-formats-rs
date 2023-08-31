@@ -385,10 +385,13 @@ impl Context<'_> {
             let mut matches = Vec::<TokenStream>::new();
             let mut values = Vec::<TokenStream>::new();
 
+            let mut integers: Vec<isize> = Vec::with_capacity(spec.0.len());
             for (key, value) in &spec.0 {
                 let var_id = &value.id;
                 let var_id = format_ident!("{}", var_id.0.to_upper_camel_case());
-                let val = Literal::isize_unsuffixed(key.parse().unwrap());
+                let int_val: isize = key.parse().unwrap();
+                integers.push(int_val);
+                let val = Literal::isize_unsuffixed(int_val);
                 let doc = format!("Value: `{}`", key);
                 values.push(quote! {
                     #[doc = #doc]
@@ -398,6 +401,14 @@ impl Context<'_> {
                     #val => Ok(Self::#var_id)
                 ))
             }
+            let min = *integers
+                .iter()
+                .min()
+                .expect("enum has at least one element");
+            let max = *integers
+                .iter()
+                .max()
+                .expect("enum has at least one element");
             let consts = spec.0.iter().map(|(key, value)| {
                 let id = &value.id;
                 let id = format_ident!("_{}", id.0.to_uppercase());
@@ -409,6 +420,37 @@ impl Context<'_> {
                 }
             });
 
+            let try_from_u8 =
+                (min >= isize::from(u8::MIN) && max <= isize::from(u8::MAX)).then(|| {
+                    quote!(
+                        impl ::std::convert::TryFrom<u8> for #id {
+                            type Error = ();
+
+                            fn try_from(v: u8) -> Result<Self, Self::Error> {
+                                match v {
+                                    #(#matches,)*
+                                    _ => Err(())
+                                }
+                            }
+                        }
+                    )
+                });
+            let try_from_u32 =
+                (min >= (u32::MIN as isize) && max <= (u32::MAX as isize)).then(|| {
+                    quote!(
+                        impl ::std::convert::TryFrom<u32> for #id {
+                            type Error = ();
+
+                            fn try_from(v: u32) -> Result<Self, Self::Error> {
+                                match v {
+                                    #(#matches,)*
+                                    _ => Err(())
+                                }
+                            }
+                        }
+                    )
+                });
+
             quote! {
                 #[doc = ""]
                 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -417,27 +459,9 @@ impl Context<'_> {
                     #(#values),*
                 }
 
-                impl ::std::convert::TryFrom<u32> for #id {
-                    type Error = ();
+                #try_from_u8
+                #try_from_u32
 
-                    fn try_from(v: u32) -> Result<Self, Self::Error> {
-                        match v {
-                            #(#matches,)*
-                            _ => Err(())
-                        }
-                    }
-                }
-
-                impl ::std::convert::TryFrom<u8> for #id {
-                    type Error = ();
-
-                    fn try_from(v: u8) -> Result<Self, Self::Error> {
-                        match v {
-                            #(#matches,)*
-                            _ => Err(())
-                        }
-                    }
-                }
 
                 impl #id {
                     #(#consts)*

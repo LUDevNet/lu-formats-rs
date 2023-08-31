@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use kaitai_struct_types::{TypeRef, WellKnownTypeRef};
 
 use crate::{
-    r#type::{Enum, ObligationTree, Type},
+    r#type::{Enum, ObligationTree, Type, TypeDep},
     Module,
 };
 
@@ -43,6 +43,10 @@ impl NamingContext {
         self.resolve(self.root.as_ref()?)
     }
 
+    pub fn get_root_mut(&mut self) -> Option<&mut Type> {
+        self.types.get_mut(self.root.as_ref()?)
+    }
+
     pub fn need_lifetime(&self, type_ref: &TypeRef) -> bool {
         match type_ref {
             TypeRef::WellKnown(WellKnownTypeRef::Str) => true,
@@ -69,19 +73,29 @@ impl NamingContext {
 
     fn merge_root_obligations<'a>(
         &'a self,
-        path: &mut Vec<String>,
+        path: &mut Vec<&'a TypeDep>,
         id: &'a str,
         t: &'a Type,
         in_stack: &mut BTreeSet<&'a str>,
         results: &mut BTreeMap<String, ObligationTree>,
     ) -> ObligationTree {
+        // Start with the explicit root_obligation on the type
         let mut o = t.root_obligations.clone();
-        //  &t.may_depend_on
-        self.merge_root_obligation(&t.depends_on, in_stack, &mut o, path, results);
-        for deps in t.may_depend_on.values() {
-            self.merge_root_obligation(deps, in_stack, &mut o, path, results);
+        // FIXME: push field id to `path` argument so we can check whether the current traversal
+        // _is_ a parent of a nested root obligation e.g. `_root.fib_chunk.data.version`
+        for (dep, info) in &t.depends_on {
+            path.push(info);
+            self.merge_root_obligation(&mut o, dep, in_stack, path, results);
+            path.pop();
+        }
+        for (dep, info) in &t.may_depend_on {
+            path.push(info);
+            self.merge_root_obligation(&mut o, dep, in_stack, path, results);
+            path.pop();
         }
         if !t.is_root {
+            // TODO: remove current path
+            o.mark_local(path);
             results.entry(id.to_owned()).or_default().union(&o);
         }
         o
@@ -89,19 +103,17 @@ impl NamingContext {
 
     fn merge_root_obligation<'a>(
         &'a self,
-        list: &'a BTreeSet<String>,
-        in_stack: &mut BTreeSet<&'a str>,
         o: &mut ObligationTree,
-        path: &mut Vec<String>,
+        dep: &'a str,
+        in_stack: &mut BTreeSet<&'a str>,
+        path: &mut Vec<&'a TypeDep>,
         results: &mut BTreeMap<String, ObligationTree>,
     ) {
-        for dep in list {
-            let t = self.resolve(dep).expect(dep);
-            if t.source_mod.is_none() && !in_stack.contains(dep.as_str()) {
-                in_stack.insert(dep.as_str());
-                o.union(&self.merge_root_obligations(path, dep, t, in_stack, results));
-                in_stack.remove(dep.as_str());
-            }
+        let t = self.resolve(dep).expect(dep);
+        if t.source_mod.is_none() && !in_stack.contains(dep) {
+            in_stack.insert(dep);
+            o.union(&self.merge_root_obligations(path, dep, t, in_stack, results));
+            in_stack.remove(dep);
         }
     }
 
@@ -110,7 +122,7 @@ impl NamingContext {
     fn propagate_root_obligations(&mut self) {
         let root_id = self.root.as_ref().unwrap().as_str();
         let root = self.get_root().unwrap();
-        let mut path = vec!["_root".to_owned()];
+        let mut path = vec![];
         let mut in_stack = BTreeSet::new();
         let mut results = BTreeMap::new();
         let _ = self.merge_root_obligations(&mut path, root_id, root, &mut in_stack, &mut results);
@@ -123,6 +135,10 @@ impl NamingContext {
                 }
             }
         }
+        self.get_root_mut()
+            .unwrap()
+            .root_obligations
+            .mark_local(&[]);
     }
 
     pub fn process_dependencies(&mut self) {
@@ -133,10 +149,10 @@ impl NamingContext {
         let mut maybe_dependencies: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (s, ty) in &self.types {
             if ty.source_mod.is_none() {
-                for dep in &ty.depends_on {
+                for dep in ty.depends_on.keys() {
                     dependencies.entry(dep.clone()).or_default().push(s.clone());
                 }
-                for dep in ty.may_depend_on.values().flatten() {
+                for dep in ty.may_depend_on.keys() {
                     maybe_dependencies
                         .entry(dep.clone())
                         .or_default()

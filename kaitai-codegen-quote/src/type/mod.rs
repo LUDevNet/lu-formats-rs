@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use heck::ToUpperCamelCase;
 use kaitai_expr::{parse_expr, Expr};
@@ -12,61 +9,9 @@ use kaitai_struct_types::{
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
-/// Grouping of values outside the current struct/parser.
-///
-/// These are values that need to be known before parsing can begin.
-///
-/// Each type can have `_root` and `_parent` obligation trees.
-///
-/// - Root Obligations are passed on to parent parsers unchanged until they reach
-///   the top level parser.
-/// - Parent Obligations are passed on with one `_parent` removed until
-///   the obligations refer to local fields.
-#[derive(Default, Clone)]
-pub struct ObligationTree(BTreeMap<String, ObligationTree>);
+mod obligations;
 
-impl fmt::Debug for ObligationTree {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.0, f)
-    }
-}
-
-impl ObligationTree {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn doc(&self, key: &str) -> Option<TokenStream> {
-        (!self.0.is_empty()).then(|| {
-            let text = format!("```ron\n{}: {:#?}\n```", key, &self.0);
-            quote!(#[doc = #text])
-        })
-    }
-
-    pub fn union(&mut self, other: &ObligationTree) {
-        for (key, value) in &other.0 {
-            self.0.entry(key.clone()).or_default().union(value);
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn fields(&self) -> impl Iterator<Item = &String> {
-        self.0.keys()
-    }
-
-    pub fn get(&self, field: &str) -> Option<&ObligationTree> {
-        self.0.get(field)
-    }
-
-    fn add(&mut self, fields: &[&str]) {
-        if let Some((first, rest)) = fields.split_first() {
-            self.0.entry(first.to_string()).or_default().add(rest);
-        }
-    }
-}
+pub use obligations::ObligationTree;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeKind {
@@ -114,6 +59,11 @@ impl Default for TypeKind {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TypeDep {
+    pub(crate) fields: BTreeSet<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Type {
     pub is_root: bool,
@@ -128,10 +78,10 @@ pub struct Type {
     /// This represents a set of generics that depend on
     /// values in the parent.
     pub field_generics: BTreeMap<String, FieldGenerics>,
-    pub depends_on: BTreeSet<String>,
+    pub depends_on: BTreeMap<String, TypeDep>,
 
-    /// Map from field name to dependency
-    pub may_depend_on: BTreeMap<String, BTreeSet<String>>,
+    /// Map from user-type id to a set of uses
+    pub may_depend_on: BTreeMap<String, TypeDep>,
 
     /// Whether this type encodes a variable length string
     kind: TypeKind,
@@ -207,7 +157,7 @@ impl Type {
 
             kind: TypeKind::detect(key, seq),
 
-            depends_on: BTreeSet::new(),
+            depends_on: BTreeMap::new(),
             may_depend_on: BTreeMap::new(),
 
             instances: Vec::new(),
@@ -269,7 +219,11 @@ impl Type {
 
         self.needs_lifetime = self.needs_lifetime || f.resolved_type.needs_lifetime_a_priori();
         if let ResolvedType::User(n) = &f.resolved_type {
-            self.depends_on.insert(n.to_owned());
+            self.depends_on
+                .entry(n.to_owned())
+                .or_default()
+                .fields
+                .insert(orig_attr_id.to_owned());
         }
 
         if let ResolvedType::Dynamic(s, cases) = &f.resolved_type {
@@ -289,16 +243,18 @@ impl Type {
         let f = Field::new(key, ResolvedType::of_attribute(value));
         if let ResolvedType::User(n) = &f.resolved_type {
             self.may_depend_on
-                .entry(key.to_owned())
+                .entry(n.to_owned())
                 .or_default()
-                .insert(n.to_owned());
+                .fields
+                .insert(key.to_owned());
         } else if let ResolvedType::Dynamic(_s, cases) = &f.resolved_type {
             for case in cases {
                 if let ResolvedType::User(n) = &case.ty {
                     self.may_depend_on
-                        .entry(key.to_owned())
+                        .entry(n.to_owned())
                         .or_default()
-                        .insert(n.to_owned());
+                        .fields
+                        .insert(key.to_owned());
                 }
             }
         }
@@ -317,9 +273,10 @@ impl Type {
         for case in cases {
             if let ResolvedType::User(n) = &case.ty {
                 self.may_depend_on
-                    .entry(orig_attr_id.to_owned())
+                    .entry(n.to_owned())
                     .or_default()
-                    .insert(n.to_owned());
+                    .fields
+                    .insert(orig_attr_id.to_owned());
                 fg_depends_on.insert(n.clone());
             }
             fg_cases.push(case.clone())

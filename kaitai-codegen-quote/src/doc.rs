@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use kaitai_struct_types::{Attribute, Repeat, StringOrArray};
 use proc_macro2::TokenStream;
@@ -29,8 +29,12 @@ fn doc_type_list(nc: &NamingContext, key: &str, list: &[String]) -> Option<Token
     (!list.is_empty()).then(|| doc_type_seq(nc, key, list))
 }
 
-fn doc_type_set(nc: &NamingContext, key: &str, set: &BTreeSet<String>) -> Option<TokenStream> {
-    (!set.is_empty()).then(|| doc_type_seq(nc, key, set))
+fn doc_type_map<T>(
+    nc: &NamingContext,
+    key: &str,
+    set: &BTreeMap<String, T>,
+) -> Option<TokenStream> {
+    (!set.is_empty()).then(|| doc_type_seq(nc, key, set.keys()))
 }
 
 pub(crate) fn doc_attr(attr: &Attribute) -> TokenStream {
@@ -92,12 +96,8 @@ pub(crate) fn doc_struct(
     let doc_parent_obligations = self_ty.parent_obligations.doc("_parent");
     let doc_parents = doc_type_list(nc, "Parents", &self_ty.parents);
     let doc_maybe_parents = doc_type_list(nc, "Maybe parents", &self_ty.maybe_parents);
-    let doc_depends_on = doc_type_set(nc, "Depends on", &self_ty.depends_on);
-    let mut doc_may_depend_on = Vec::new();
-    for (field, deps) in &self_ty.may_depend_on {
-        let title = format!("Field '{}' may depend on", field);
-        doc_may_depend_on.push(doc_type_set(nc, &title, deps));
-    }
+    let doc_depends_on = doc_type_map(nc, "Depends on", &self_ty.depends_on);
+    let doc_may_depend_on = doc_type_map(nc, "May depend on", &self_ty.may_depend_on);
     let doc_refs = doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
     quote!(
         #id_doc
@@ -108,6 +108,6 @@ pub(crate) fn doc_struct(
         #doc_parents
         #doc_maybe_parents
         #doc_depends_on
-        #(#doc_may_depend_on)*
+        #doc_may_depend_on
     )
 }
