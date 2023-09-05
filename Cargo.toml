@@ -26,3 +26,7 @@ members = [".", "kaitai-struct-types", "kaitai-codegen-quote", "kaitai-expr"]
 [[bin]]
 name = "dump-luz"
 required-features = ["json"]
+
+[[bin]]
+name = "dump-lvl"
+required-features = ["json"]
