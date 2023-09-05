@@ -51,7 +51,7 @@ fn user_type(
 pub(super) fn codegen_parser_fn(
     self_ty: &Type,
     seq: &[Attribute],
-    tc: &super::TyContext,
+    tc: &super::structs::TyContext,
     nc: &NamingContext,
 ) -> TokenStream {
     let mut parser = vec![];
@@ -98,7 +98,7 @@ pub(super) fn codegen_parser_fn(
         Endian::BigEndian => quote!(::nom::number::Endianness::Big),
     };
     let parser_name = &self_ty.parser_name;
-    let generics = &tc.generics[..];
+    let generics = tc.get_generics();
 
     let id = &self_ty.ident;
     let q_body = if self_ty.is_var_len_str() {
