@@ -4,7 +4,7 @@
 
 use crate::{
     ctx::NamingContext,
-    r#type::{uint_ty, CaseKind, Field, FieldGenerics, ResolvedType, Type},
+    r#type::{uint_ty, CaseKind, Field, FieldGenerics, ResolvedType, ResolvedTypeKind, Type},
 };
 use heck::ToUpperCamelCase;
 use kaitai_struct_types::{
@@ -157,7 +157,7 @@ fn codegen_type_ref_parse(
     p_endian: &Ident,
 ) -> TokenStream {
     let in_parent = false;
-    if let ResolvedType::Enum(e, w) = resolved_ty {
+    if let ResolvedTypeKind::Enum(e, w) = &resolved_ty.kind {
         let e = nc.get_enum(e).unwrap();
         let i_enum = &e.ident;
         let q_parser = primitive::wk_parser(w, size, p_endian);
@@ -170,8 +170,8 @@ fn codegen_type_ref_parse(
             user_type(nc, _named_ty, self_ty.is_root, in_parent, p_endian)
         }
         TypeRef::Dynamic { switch_on, cases } => {
-            match resolved_ty {
-                ResolvedType::Dynamic(_, _) => {
+            match &resolved_ty.kind {
+                ResolvedTypeKind::Dynamic(_, _) => {
                     let id = type_ref_id.unwrap();
                     let fg = self_ty.field_generics.get(id).expect(id);
                     if fg.external {
@@ -180,14 +180,14 @@ fn codegen_type_ref_parse(
                         variant_parser_expr(nc, self_ty.is_root, fg, in_parent, p_endian)
                     }
                 }
-                ResolvedType::Magic => panic!("Not a TypeRef::Dynamic"),
-                ResolvedType::User(_) => panic!("Not a TypeRef::Dynamic"),
-                ResolvedType::Enum(_, _) => panic!("Not a TypeRef::Dynamic"),
-                ResolvedType::SInt { .. } => panic!("Not a TypeRef::Dynamic"),
-                ResolvedType::Float { .. } => panic!("Not a TypeRef::Dynamic"),
-                ResolvedType::Str { .. } => panic!("Not a TypeRef::Dynamic"),
-                ResolvedType::Bytes { .. } => panic!("Not a TypeRef::Dynamic"),
-                ResolvedType::UInt { width, .. } => {
+                ResolvedTypeKind::Magic => panic!("Not a TypeRef::Dynamic"),
+                ResolvedTypeKind::User(_) => panic!("Not a TypeRef::Dynamic"),
+                ResolvedTypeKind::Enum(_, _) => panic!("Not a TypeRef::Dynamic"),
+                ResolvedTypeKind::SInt { .. } => panic!("Not a TypeRef::Dynamic"),
+                ResolvedTypeKind::Float { .. } => panic!("Not a TypeRef::Dynamic"),
+                ResolvedTypeKind::Str { .. } => panic!("Not a TypeRef::Dynamic"),
+                ResolvedTypeKind::Bytes { .. } => panic!("Not a TypeRef::Dynamic"),
+                ResolvedTypeKind::UInt { width, .. } => {
                     let switch_expr = match switch_on {
                         AnyScalar::Null => todo!(),
                         AnyScalar::Bool(_) => todo!(),
@@ -303,17 +303,17 @@ fn variant_parser_expr(
         .iter()
         .map(|case| {
             let p_case_id = &case.ident;
-            let case_parser = match &case.ty {
-                ResolvedType::SInt { width, endian } => {
+            let case_parser = match &case.ty.kind {
+                ResolvedTypeKind::SInt { width, endian } => {
                     primitive::sint_parser(*width, *endian, p_endian)
                 }
-                ResolvedType::UInt { width, endian } => {
+                ResolvedTypeKind::UInt { width, endian } => {
                     primitive::uint_parser(*width, *endian, p_endian)
                 }
-                ResolvedType::Float { width, endian } => {
+                ResolvedTypeKind::Float { width, endian } => {
                     primitive::float_parser(*width, *endian, p_endian)
                 }
-                ResolvedType::User(n) => {
+                ResolvedTypeKind::User(n) => {
                     let _named_ty = nc.resolve(n).unwrap();
                     user_type(nc, _named_ty, is_root_parser, in_parent, p_endian)
                 }

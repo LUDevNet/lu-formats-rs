@@ -6,7 +6,7 @@ use quote::{format_ident, quote, ToTokens};
 
 use crate::{
     ctx::NamingContext,
-    r#type::{float_ty, ident_of, sint_ty, uint_ty, ObligationTree, ResolvedType, Type},
+    r#type::{float_ty, ident_of, sint_ty, uint_ty, ObligationTree, ResolvedTypeKind, Type},
 };
 
 pub(super) fn parent_obligation_params(
@@ -104,22 +104,22 @@ fn visit_root_obligation(
         let f_name = format_ident!("{}", f);
         let mut f_is_parser_arg = true;
         let mut _dbg = format!("{}::{}", context_id, f);
-        let (f_ty, f_val) = match context_ty.type_of_field(f).expect(&_dbg) {
-            ResolvedType::UInt { width, .. } => (uint_ty(*width), quote!(#f_name)),
-            ResolvedType::SInt { width, .. } => (sint_ty(*width), quote!(#f_name)),
-            ResolvedType::Float { width, .. } => (float_ty(*width), quote!(#f_name)),
-            ResolvedType::Magic => todo!(),
-            ResolvedType::Str { .. } => todo!(),
-            ResolvedType::Bytes { .. } => todo!(),
-            ResolvedType::Enum(_, _) => todo!(),
-            ResolvedType::User(name) => {
+        let (f_ty, f_val) = match &context_ty.type_of_field(f).expect(&_dbg).kind {
+            ResolvedTypeKind::UInt { width, .. } => (uint_ty(*width), quote!(#f_name)),
+            ResolvedTypeKind::SInt { width, .. } => (sint_ty(*width), quote!(#f_name)),
+            ResolvedTypeKind::Float { width, .. } => (float_ty(*width), quote!(#f_name)),
+            ResolvedTypeKind::Magic => todo!(),
+            ResolvedTypeKind::Str { .. } => todo!(),
+            ResolvedTypeKind::Bytes { .. } => todo!(),
+            ResolvedTypeKind::Enum(_, _) => todo!(),
+            ResolvedTypeKind::User(name) => {
                 let id = format_ident!("{}{}", context_id, name.to_upper_camel_case());
                 f_is_parser_arg = false;
                 let inner_ty = nc.resolve(name).unwrap();
                 let val = visit_root_obligation(inner, inner_ty, &id, parser_args, struct_defs, nc);
                 (id.into_token_stream(), quote!(#f_name: #val))
             }
-            ResolvedType::Dynamic(_, _) => todo!(),
+            ResolvedTypeKind::Dynamic(_, _) => todo!(),
         };
         if f_is_parser_arg {
             parser_args.push(quote!(#f_name: #f_ty,));

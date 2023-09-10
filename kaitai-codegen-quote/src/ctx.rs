@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    r#type::{Enum, ObligationTree, ResolvedType, Type, TypeDep},
+    r#type::{Enum, ObligationTree, ResolvedType, ResolvedTypeKind, Type, TypeDep},
     Module,
 };
 
@@ -46,10 +46,10 @@ impl NamingContext {
     }
 
     pub fn need_lifetime(&self, ty: &ResolvedType) -> bool {
-        match ty {
-            ResolvedType::Bytes { .. } => true,
-            ResolvedType::Str { .. } => true,
-            ResolvedType::User(n) => self.resolve(n).is_some_and(|v| v.needs_lifetime),
+        match &ty.kind {
+            ResolvedTypeKind::Bytes { .. } => true,
+            ResolvedTypeKind::Str { .. } => true,
+            ResolvedTypeKind::User(n) => self.resolve(n).is_some_and(|v| v.needs_lifetime),
             _ => false,
         }
     }

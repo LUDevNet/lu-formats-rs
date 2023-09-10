@@ -2,15 +2,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use heck::ToUpperCamelCase;
 use kaitai_expr::{parse_expr, Expr};
-use kaitai_struct_types::{
-    AnyScalar, Attribute, Endian, EndianSpec, IntTypeRef, KsySchema, TypeRef, TypeSpec,
-    WellKnownTypeRef,
-};
+use kaitai_struct_types::{Attribute, Endian, KsySchema, TypeRef, TypeSpec, WellKnownTypeRef};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
+mod field_generics;
 mod obligations;
+mod resolved;
 
+pub use self::resolved::{ResolvedType, ResolvedTypeCount, ResolvedTypeKind};
+pub use field_generics::FieldGenerics;
 pub use obligations::ObligationTree;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,45 +97,6 @@ pub struct Type {
     pub parent_obligations: ObligationTree,
 }
 
-fn var_case(key: &AnyScalar, val: &TypeRef) -> Case {
-    let (name, kind) = match key {
-        AnyScalar::Null => todo!(),
-        AnyScalar::Bool(true) => ("True".to_owned(), CaseKind::Bool(true)),
-        AnyScalar::Bool(false) => ("False".to_owned(), CaseKind::Bool(false)),
-        AnyScalar::String(s) => {
-            let (_enum, part) = s.split_once("::").unwrap();
-            (
-                part.to_upper_camel_case(),
-                CaseKind::Enum(_enum.to_string(), part.to_string()),
-            )
-        }
-        AnyScalar::UInt(i) => (format!("N{}", i), CaseKind::Number(*i)),
-    };
-    Case::new(&name, kind, ResolvedType::of_type_ref(val))
-}
-
-fn all_unsigned<'a, I: Iterator<Item = &'a TypeRef>>(cases: I) -> Option<IntTypeRef> {
-    let mut unsigned: Option<IntTypeRef> = None;
-    let mut all_unsigned = true;
-    for case in cases {
-        if let TypeRef::WellKnown(WellKnownTypeRef::Unsigned(u)) = case {
-            unsigned = match unsigned {
-                Some(i) if u > &i => Some(*u),
-                Some(i) => Some(i),
-                None => Some(*u),
-            };
-        } else {
-            all_unsigned = false;
-            break;
-        }
-    }
-    if all_unsigned {
-        unsigned
-    } else {
-        None
-    }
-}
-
 impl Type {
     fn new_named(
         key: &str,
@@ -217,8 +179,8 @@ impl Type {
         let orig_attr_id = a.id.as_deref().unwrap();
         let f = Field::new(orig_attr_id, ResolvedType::of_attribute(a));
 
-        self.needs_lifetime = self.needs_lifetime || f.resolved_type.needs_lifetime_a_priori();
-        if let ResolvedType::User(n) = &f.resolved_type {
+        self.needs_lifetime = self.needs_lifetime || f.resolved_type.kind.needs_lifetime_a_priori();
+        if let ResolvedTypeKind::User(n) = &f.resolved_type.kind {
             self.depends_on
                 .entry(n.to_owned())
                 .or_default()
@@ -226,7 +188,7 @@ impl Type {
                 .insert(orig_attr_id.to_owned());
         }
 
-        if let ResolvedType::Dynamic(s, cases) = &f.resolved_type {
+        if let ResolvedTypeKind::Dynamic(s, cases) = &f.resolved_type.kind {
             let fg = self.new_field_generics(orig_attr_id, cases, s);
             self.field_generics.insert(orig_attr_id.to_string(), fg);
         }
@@ -241,15 +203,15 @@ impl Type {
 
     fn push_instances_elem(&mut self, key: &str, value: &Attribute) {
         let f = Field::new(key, ResolvedType::of_attribute(value));
-        if let ResolvedType::User(n) = &f.resolved_type {
+        if let ResolvedTypeKind::User(n) = &f.resolved_type.kind {
             self.may_depend_on
                 .entry(n.to_owned())
                 .or_default()
                 .fields
                 .insert(key.to_owned());
-        } else if let ResolvedType::Dynamic(_s, cases) = &f.resolved_type {
+        } else if let ResolvedTypeKind::Dynamic(_s, cases) = &f.resolved_type.kind {
             for case in cases {
-                if let ResolvedType::User(n) = &case.ty {
+                if let ResolvedTypeKind::User(n) = &case.ty.kind {
                     self.may_depend_on
                         .entry(n.to_owned())
                         .or_default()
@@ -271,7 +233,7 @@ impl Type {
         let mut _enum_set = BTreeSet::<String>::new();
         let mut fg_cases = Vec::<Case>::new();
         for case in cases {
-            if let ResolvedType::User(n) = &case.ty {
+            if let ResolvedTypeKind::User(n) = &case.ty.kind {
                 self.may_depend_on
                     .entry(n.to_owned())
                     .or_default()
@@ -328,110 +290,6 @@ impl Type {
     /// For a given `id` within this type, find the ([`ResolvedType`]) that represents type.
     pub(crate) fn type_of_field(&self, name: &str) -> Option<&ResolvedType> {
         self.find_field(name).map(Field::resolved_ty)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ResolvedType {
-    UInt {
-        width: usize,
-        endian: EndianSpec,
-    },
-    SInt {
-        width: usize,
-        endian: EndianSpec,
-    },
-    Float {
-        width: usize,
-        endian: EndianSpec,
-    },
-    Str {
-        encoding: (),
-        zero_terminator: bool,
-    },
-    Bytes {
-        size_expr: String,
-    },
-    Enum(String, WellKnownTypeRef),
-    /// A named user-type
-    User(String),
-    Dynamic(String, Vec<Case>),
-    Magic,
-}
-
-impl ResolvedType {
-    fn needs_lifetime_a_priori(&self) -> bool {
-        use ResolvedType::*;
-        matches!(self, Str { .. } | Bytes { .. })
-    }
-
-    fn of_well_known(w: WellKnownTypeRef) -> Self {
-        match w {
-            WellKnownTypeRef::Unsigned(u) => ResolvedType::UInt {
-                width: u.bytes(),
-                endian: u.endian(),
-            },
-            WellKnownTypeRef::Signed(s) => ResolvedType::SInt {
-                width: s.bytes(),
-                endian: s.endian(),
-            },
-            WellKnownTypeRef::F4(endian) => ResolvedType::Float { width: 4, endian },
-            WellKnownTypeRef::F8(endian) => ResolvedType::Float { width: 8, endian },
-            WellKnownTypeRef::Str => ResolvedType::Str {
-                encoding: (),
-                zero_terminator: false,
-            },
-            WellKnownTypeRef::StrZ => ResolvedType::Str {
-                encoding: (),
-                zero_terminator: true,
-            },
-        }
-    }
-
-    fn of_type_ref(a: &TypeRef) -> ResolvedType {
-        match a {
-            TypeRef::WellKnown(w) => Self::of_well_known(*w),
-            TypeRef::Named(n) => ResolvedType::User(n.to_owned()),
-            TypeRef::Dynamic { .. } => todo!(),
-        }
-    }
-
-    fn of_attribute(a: &Attribute) -> ResolvedType {
-        if let Some(ty) = &a.ty {
-            match ty {
-                TypeRef::WellKnown(w) => {
-                    if let Some(e) = &a.r#enum {
-                        ResolvedType::Enum(e.to_string(), *w)
-                    } else {
-                        Self::of_well_known(*w)
-                    }
-                }
-                TypeRef::Named(n) => ResolvedType::User(n.to_owned()),
-                TypeRef::Dynamic { switch_on, cases } => {
-                    if let Some(type_ref) = all_unsigned(cases.values()) {
-                        ResolvedType::UInt {
-                            endian: EndianSpec::Implicit, // FIXME
-                            width: type_ref.bytes(),
-                        }
-                    } else if let AnyScalar::String(s) = switch_on {
-                        ResolvedType::Dynamic(
-                            s.to_owned(),
-                            cases.iter().map(|(k, v)| var_case(k, v)).collect(),
-                        )
-                    } else {
-                        todo!()
-                    }
-                }
-            }
-        } else if a.contents.is_some() {
-            ResolvedType::Magic
-        } else if let Some(size_expr) = a.size.as_deref() {
-            ResolvedType::Bytes {
-                size_expr: size_expr.to_owned(),
-            }
-        } else {
-            todo!("{:?}", a)
-        }
     }
 }
 
@@ -500,71 +358,6 @@ impl Case {
 
     pub fn ident(&self) -> &Ident {
         &self.ident
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct FieldGenerics {
-    /// The name of the generic field
-    pub(crate) type_: Ident,
-    /// The trait associated with that field
-    pub(crate) trait_: Ident,
-    pub(crate) parser: Ident,
-    /// Identifier for an enum that has all options
-    pub(crate) var_enum: Ident,
-    pub(crate) var_enum_other: Ident,
-    pub(crate) switch_expr: String,
-
-    // NOTE: depends on stable ordering in kaitai-struct-types
-    pub(crate) cases: Vec<Case>,
-
-    /// (relative) names of the types this field generic may depend on
-    pub(crate) depends_on: BTreeSet<String>,
-    pub(crate) need_lifetime: bool,
-
-    pub(crate) external: bool,
-}
-
-impl FieldGenerics {
-    fn new(
-        orig_attr_id: &str,
-        self_ident: &Ident,
-        switch_expr: &str,
-        fg_cases: Vec<Case>,
-        fg_depends_on: BTreeSet<String>,
-    ) -> FieldGenerics {
-        let rust_generic_name = orig_attr_id.to_upper_camel_case();
-        let g = format_ident!("{}", rust_generic_name);
-        let t = format_ident!("I{}{}", self_ident, &g);
-        let var_enum = format_ident!("{}{}Variants", self_ident, &g);
-        FieldGenerics {
-            trait_: t,
-            type_: g,
-            var_enum,
-            var_enum_other: format_ident!("_Other"),
-            parser: format_ident!("parse_{}", orig_attr_id),
-            switch_expr: switch_expr.to_string(),
-            cases: fg_cases,
-
-            depends_on: fg_depends_on,
-            need_lifetime: false,
-            external: switch_expr.starts_with("_parent."),
-        }
-    }
-
-    pub fn variant_type(&self) -> TokenStream {
-        let n: &Ident = &self.var_enum;
-        match self.need_lifetime {
-            true => quote!(#n<'a>),
-            false => quote!(#n),
-        }
-    }
-
-    pub fn var_enum_generics(&self) -> Option<TokenStream> {
-        match self.need_lifetime {
-            false => None,
-            true => Some(quote!(<'a>)),
-        }
     }
 }
 

@@ -9,7 +9,9 @@ use std::{
 use crate::{
     ctx::NamingContext,
     doc, parser,
-    r#type::{self, Case, Field, FieldGenerics, ResolvedType, Type},
+    r#type::{
+        self, Case, Field, FieldGenerics, ResolvedType, ResolvedTypeCount, ResolvedTypeKind, Type,
+    },
 };
 
 fn codegen_named_ty(nc: &NamingContext, n: &str) -> TokenStream {
@@ -82,7 +84,7 @@ fn codegen_cases(
     let enclosing_type = gen.var_enum.to_string();
     for (i, case_type) in cases.iter().enumerate() {
         let n = gen.cases[i].ident();
-        let inner = codegen_resolved_ty(&case_type.ty, &enclosing_type, nc, tc, n, field_generics);
+        let inner = codegen_resolved_ty(nc, &case_type.ty, &enclosing_type, tc, n, field_generics);
         enum_cases.push(quote! {
             #n(#inner),
         });
@@ -135,7 +137,6 @@ fn codegen_cases(
 
 fn codegen_attr_ty(
     nc: &NamingContext,
-    attr: &Attribute, // FIXME: move repeated, optional into Field
     self_ty: &Type,
     field: &Field,
     tc: &mut TyContext,
@@ -145,36 +146,46 @@ fn codegen_attr_ty(
     let fg = self_ty.field_generics.get(orig_attr_id);
     let resolved = field.resolved_ty();
     let enclosing_type = self_ty.rust_struct_name.as_str();
-    let ty = codegen_resolved_ty(resolved, enclosing_type, nc, tc, attr_id, fg);
-    let ty = if let Some(_rep) = &attr.repeat {
-        quote!(Vec<#ty>)
-    } else if let Some(_expr) = &attr.if_expr {
-        quote!(Option<#ty>)
-    } else {
-        ty
-    };
+    let ty = codegen_resolved_ty(nc, resolved, enclosing_type, tc, attr_id, fg);
     Ok(ty)
 }
 
 fn codegen_resolved_ty(
-    resolved: &ResolvedType,
+    nc: &NamingContext,
+    ty: &ResolvedType,
+    enclosing_type: &str,
+    tc: &mut TyContext,
+    attr_id: &Ident,
+    fg: Option<&FieldGenerics>,
+) -> TokenStream {
+    let inner = codegen_resolved_ty_kind(&ty.kind, enclosing_type, nc, tc, attr_id, fg);
+    match &ty.count {
+        ResolvedTypeCount::Required => inner,
+        ResolvedTypeCount::Optional => quote!(Option<#inner>),
+        ResolvedTypeCount::Variable => quote!(Vec<#inner>),
+        ResolvedTypeCount::Fixed(i) => quote!([#inner; #i]),
+    }
+}
+
+fn codegen_resolved_ty_kind(
+    ty_kind: &ResolvedTypeKind,
     enclosing_type: &str,
     nc: &NamingContext,
     tc: &mut TyContext,
     attr_id: &Ident,
     fg: Option<&FieldGenerics>,
 ) -> TokenStream {
-    match resolved {
-        ResolvedType::Dynamic(_switch_on, cases) => {
+    match ty_kind {
+        ResolvedTypeKind::Dynamic(_switch_on, cases) => {
             codegen_cases(cases, nc, tc, enclosing_type, attr_id, fg)
         }
-        ResolvedType::Magic => quote!(()),
-        ResolvedType::User(n) => codegen_named_ty(nc, n),
-        ResolvedType::Enum(e, _) => nc.get_enum(e).unwrap().ident.to_token_stream(),
-        ResolvedType::UInt { width, .. } => r#type::uint_ty(*width),
-        ResolvedType::SInt { width, .. } => r#type::sint_ty(*width),
-        ResolvedType::Float { width, .. } => r#type::float_ty(*width),
-        ResolvedType::Str { .. } | ResolvedType::Bytes { .. } => quote!(&'a [u8]),
+        ResolvedTypeKind::Magic => quote!(()),
+        ResolvedTypeKind::User(n) => codegen_named_ty(nc, n),
+        ResolvedTypeKind::Enum(e, _) => nc.get_enum(e).unwrap().ident.to_token_stream(),
+        ResolvedTypeKind::UInt { width, .. } => r#type::uint_ty(*width),
+        ResolvedTypeKind::SInt { width, .. } => r#type::sint_ty(*width),
+        ResolvedTypeKind::Float { width, .. } => r#type::float_ty(*width),
+        ResolvedTypeKind::Str { .. } | ResolvedTypeKind::Bytes { .. } => quote!(&'a [u8]),
     }
 }
 
@@ -188,7 +199,7 @@ fn codegen_attr(
     let attr_doc = doc::doc_attr(attr);
     let serialize_with = parser::serialize_with(attr);
 
-    let ty = codegen_attr_ty(nc, attr, self_ty, field, tc)?;
+    let ty = codegen_attr_ty(nc, self_ty, field, tc)?;
     let attr_id = field.ident();
     Ok(quote!(
         #attr_doc
@@ -206,9 +217,8 @@ fn codegen_struct_body(
     if self_ty.is_var_len_str() {
         return Ok(quote!((pub &'a [u8]);));
     } else if self_ty.is_newtype() {
-        let attr = &seq[0];
         let field = &self_ty.fields[0];
-        let ty = codegen_attr_ty(nc, attr, self_ty, field, tc).unwrap();
+        let ty = codegen_attr_ty(nc, self_ty, field, tc).unwrap();
         return Ok(quote!((pub #ty);));
     }
 
