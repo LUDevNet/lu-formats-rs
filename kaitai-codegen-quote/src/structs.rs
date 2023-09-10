@@ -1,31 +1,16 @@
-use kaitai_struct_types::{Attribute, IntTypeRef, StringOrArray, TypeRef, WellKnownTypeRef};
+use kaitai_struct_types::{Attribute, StringOrArray};
 use proc_macro2::{Ident, TokenStream};
-use quote::{quote, ToTokens};
-use std::{collections::BTreeSet, io};
+use quote::{format_ident, quote, ToTokens};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io,
+};
 
 use crate::{
     ctx::NamingContext,
     doc, parser,
-    r#type::{self, Field, FieldGenerics, ResolvedType, Type},
+    r#type::{self, Case, Field, FieldGenerics, ResolvedType, Type},
 };
-
-fn quote_wk_typeref(wktr: WellKnownTypeRef) -> TokenStream {
-    match wktr {
-        WellKnownTypeRef::Unsigned(IntTypeRef::Int1) => quote!(u8),
-        WellKnownTypeRef::Unsigned(IntTypeRef::Int2(_)) => quote!(u16),
-        WellKnownTypeRef::Unsigned(IntTypeRef::Int4(_)) => quote!(u32),
-        WellKnownTypeRef::Unsigned(IntTypeRef::Int8(_)) => quote!(u64),
-        WellKnownTypeRef::Signed(IntTypeRef::Int1) => quote!(i8),
-        WellKnownTypeRef::Signed(IntTypeRef::Int2(_)) => quote!(i16),
-        WellKnownTypeRef::Signed(IntTypeRef::Int4(_)) => quote!(i32),
-        WellKnownTypeRef::Signed(IntTypeRef::Int8(_)) => quote!(u64),
-        WellKnownTypeRef::F4(_) => quote!(f32),
-        WellKnownTypeRef::F8(_) => quote!(f64),
-        // Note: we always use u8, independent of encoding because alignment isn't guaranteed.
-        WellKnownTypeRef::Str => quote!(&'a [u8]),
-        WellKnownTypeRef::StrZ => quote!(&'a [u8]),
-    }
-}
 
 fn codegen_named_ty(nc: &NamingContext, n: &str) -> TokenStream {
     let ty = nc.resolve(n).unwrap();
@@ -70,8 +55,8 @@ impl TyContext {
     }
 }
 
-fn codegen_type_ref(
-    ty: &TypeRef,
+fn codegen_cases(
+    cases: &[Case],
     nc: &NamingContext,
     tc: &mut TyContext,
     // Name of the type this is used in
@@ -80,86 +65,77 @@ fn codegen_type_ref(
     discriminant: &Ident,
     field_generics: Option<&FieldGenerics>,
 ) -> TokenStream {
-    match ty {
-        TypeRef::WellKnown(wktr) => quote_wk_typeref(*wktr),
-        TypeRef::Named(n) => codegen_named_ty(nc, n),
-        TypeRef::Dynamic {
-            switch_on: _,
-            cases,
-        } => {
-            let gen = field_generics.unwrap();
-            let g = &gen.type_;
-            let t = &gen.trait_;
-            if gen.external {
-                tc.generics.push(quote!(#g: #t));
-                tc.generics_use.push(quote!(#g));
-            }
-            let trait_doc = format!("Marker trait for [`{enclosing_type}::{discriminant}`]");
-            let var_enum_doc = format!("Raw variants for [`{}::{}`]", enclosing_type, discriminant);
-            let mut enum_cases: Vec<TokenStream> = Vec::<TokenStream>::with_capacity(cases.len());
-            let mut trait_impl_cases = Vec::<TokenStream>::with_capacity(cases.len());
+    let gen = field_generics.unwrap();
+    let g = &gen.type_;
+    let t = &gen.trait_;
+    if gen.external {
+        tc.generics.push(quote!(#g: #t));
+        tc.generics_use.push(quote!(#g));
+    }
+    let trait_doc = format!("Marker trait for [`{enclosing_type}::{discriminant}`]");
+    let var_enum_doc = format!("Raw variants for [`{}::{}`]", enclosing_type, discriminant);
+    let mut enum_cases: Vec<TokenStream> = Vec::<TokenStream>::with_capacity(cases.len());
+    let mut trait_impl_cases = Vec::<TokenStream>::with_capacity(cases.len());
 
-            let mut inner_set = BTreeSet::<String>::new();
+    let mut inner_set = BTreeSet::<String>::new();
 
-            let enclosing_type = gen.var_enum.to_string();
-            for (i, case_type) in cases.values().enumerate() {
-                let n = gen.cases[i].ident();
-                let inner = codegen_type_ref(case_type, nc, tc, &enclosing_type, n, field_generics);
-                enum_cases.push(quote! {
-                    #n(#inner),
-                });
-                let need_lifetime = nc.need_lifetime(case_type);
-                let l = match need_lifetime {
-                    true => quote!(<'a>),
-                    false => quote!(),
-                };
+    let enclosing_type = gen.var_enum.to_string();
+    for (i, case_type) in cases.iter().enumerate() {
+        let n = gen.cases[i].ident();
+        let inner = codegen_resolved_ty(&case_type.ty, &enclosing_type, nc, tc, n, field_generics);
+        enum_cases.push(quote! {
+            #n(#inner),
+        });
+        let need_lifetime = nc.need_lifetime(&case_type.ty);
+        let l = match need_lifetime {
+            true => quote!(<'a>),
+            false => quote!(),
+        };
 
-                let inner_str = inner.to_string();
-                if !inner_set.contains(&inner_str) {
-                    inner_set.insert(inner_str);
-                    trait_impl_cases.push(quote!(
-                        impl #l #t for #inner {}
-                    ));
-                }
-            }
-
-            // variant enum generics
-            let var_enum_gen = gen.var_enum_generics();
-
-            let v_use = gen.variant_type();
-            let case_other = &gen.var_enum_other;
-            tc.traits.push(quote! {
-                #[doc = #trait_doc]
-                pub trait #t {
-                    // TODO
-                }
-
-                #[doc = #var_enum_doc]
-                #[derive(Debug, Clone, PartialEq)]
-                #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
-                #[cfg_attr(feature = "serde", serde(untagged))] // FIXME: make conditional?
-                pub enum #v_use {
-                    #(#enum_cases)*
-                    #case_other
-                }
-
-                impl #var_enum_gen #t for #v_use {}
-                impl #t for () {} // used for empty generics
-
-                #(#trait_impl_cases)*
-            });
-            if gen.external {
-                quote!(#g)
-            } else {
-                quote!(#v_use)
-            }
+        let inner_str = inner.to_string();
+        if !inner_set.contains(&inner_str) {
+            inner_set.insert(inner_str);
+            trait_impl_cases.push(quote!(
+                impl #l #t for #inner {}
+            ));
         }
+    }
+
+    // variant enum generics
+    let var_enum_gen = gen.var_enum_generics();
+
+    let v_use = gen.variant_type();
+    let case_other = &gen.var_enum_other;
+    tc.traits.push(quote! {
+        #[doc = #trait_doc]
+        pub trait #t {
+            // TODO
+        }
+
+        #[doc = #var_enum_doc]
+        #[derive(Debug, Clone, PartialEq)]
+        #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
+        #[cfg_attr(feature = "serde", serde(untagged))] // FIXME: make conditional?
+        pub enum #v_use {
+            #(#enum_cases)*
+            #case_other
+        }
+
+        impl #var_enum_gen #t for #v_use {}
+        impl #t for () {} // used for empty generics
+
+        #(#trait_impl_cases)*
+    });
+    if gen.external {
+        quote!(#g)
+    } else {
+        quote!(#v_use)
     }
 }
 
 fn codegen_attr_ty(
     nc: &NamingContext,
-    attr: &Attribute,
+    attr: &Attribute, // FIXME: move repeated, optional into Field
     self_ty: &Type,
     field: &Field,
     tc: &mut TyContext,
@@ -167,23 +143,9 @@ fn codegen_attr_ty(
     let attr_id = field.ident();
     let orig_attr_id = field.id();
     let fg = self_ty.field_generics.get(orig_attr_id);
-    let ty = match field.resolved_ty() {
-        ResolvedType::Dynamic(_, _) => {
-            if let Some(ty) = &attr.ty {
-                let enclosing_type = self_ty.rust_struct_name.as_str();
-                codegen_type_ref(ty, nc, tc, enclosing_type, attr_id, fg)
-            } else {
-                quote!(())
-            }
-        }
-        ResolvedType::Magic => quote!(()),
-        ResolvedType::User(n) => codegen_named_ty(nc, n),
-        ResolvedType::Enum(e, _) => nc.get_enum(e).unwrap().ident.to_token_stream(),
-        ResolvedType::UInt { width, .. } => r#type::uint_ty(*width),
-        ResolvedType::SInt { width, .. } => r#type::sint_ty(*width),
-        ResolvedType::Float { width, .. } => r#type::float_ty(*width),
-        ResolvedType::Str { .. } | ResolvedType::Bytes { .. } => quote!(&'a [u8]),
-    };
+    let resolved = field.resolved_ty();
+    let enclosing_type = self_ty.rust_struct_name.as_str();
+    let ty = codegen_resolved_ty(resolved, enclosing_type, nc, tc, attr_id, fg);
     let ty = if let Some(_rep) = &attr.repeat {
         quote!(Vec<#ty>)
     } else if let Some(_expr) = &attr.if_expr {
@@ -192,6 +154,28 @@ fn codegen_attr_ty(
         ty
     };
     Ok(ty)
+}
+
+fn codegen_resolved_ty(
+    resolved: &ResolvedType,
+    enclosing_type: &str,
+    nc: &NamingContext,
+    tc: &mut TyContext,
+    attr_id: &Ident,
+    fg: Option<&FieldGenerics>,
+) -> TokenStream {
+    match resolved {
+        ResolvedType::Dynamic(_switch_on, cases) => {
+            codegen_cases(cases, nc, tc, enclosing_type, attr_id, fg)
+        }
+        ResolvedType::Magic => quote!(()),
+        ResolvedType::User(n) => codegen_named_ty(nc, n),
+        ResolvedType::Enum(e, _) => nc.get_enum(e).unwrap().ident.to_token_stream(),
+        ResolvedType::UInt { width, .. } => r#type::uint_ty(*width),
+        ResolvedType::SInt { width, .. } => r#type::sint_ty(*width),
+        ResolvedType::Float { width, .. } => r#type::float_ty(*width),
+        ResolvedType::Str { .. } | ResolvedType::Bytes { .. } => quote!(&'a [u8]),
+    }
 }
 
 fn codegen_attr(
@@ -242,17 +226,35 @@ fn codegen_struct_body(
     }))
 }
 
+fn codegen_instance_fn(
+    _nc: &NamingContext,
+    _self_ty: &Type,
+    instance: &Field,
+    _attr: &Attribute,
+    _tc: &mut TyContext,
+) -> io::Result<TokenStream> {
+    let id = format_ident!("parse_{}", instance.ident());
+    //let ty = codegen_attr_ty(nc, attr, self_ty, instance, tc)?;
+    Ok(quote!(
+        pub fn #id<'a>(&self, input: &'a [u8]) -> ::nom::IResult<&'a [u8], ()> {
+            Ok((input, ()))
+        }
+    ))
+}
+
 pub(super) fn codegen_struct(
     nc: &NamingContext,
     doc: Option<&str>,
     doc_ref: Option<&StringOrArray>,
     seq: &[Attribute],
+    instances: &BTreeMap<String, Attribute>,
     self_ty: &Type,
 ) -> io::Result<TokenStream> {
     let q_doc = doc::doc_struct(self_ty, nc, doc, doc_ref);
     let needs_lifetime = self_ty.needs_lifetime;
 
     let mut tc = TyContext::new();
+    let mut q_impls: Vec<TokenStream> = Vec::new();
 
     if needs_lifetime {
         tc.generics.push(quote!('a));
@@ -262,7 +264,14 @@ pub(super) fn codegen_struct(
     let q_body = codegen_struct_body(seq, self_ty, nc, &mut tc)?;
     let q_parser = parser::codegen_parser_fn(self_ty, seq, &tc, nc);
 
+    for instance in &self_ty.instances {
+        let attr = instances.get(instance.id()).unwrap();
+        let _fn = codegen_instance_fn(nc, self_ty, instance, attr, &mut tc)?;
+        q_impls.push(_fn)
+    }
+
     let gen = tc.gen();
+    let gen_use = tc.gen_use();
     let traits = &tc.traits[..];
     let id = &self_ty.ident;
 
@@ -297,6 +306,10 @@ pub(super) fn codegen_struct(
         #serde_into
         #[derive(Debug, Clone, PartialEq)]
         pub struct #id #gen #q_body
+
+        impl #gen #id #gen_use {
+            #(#q_impls)*
+        }
 
         #q_parser
         #string_from_impl

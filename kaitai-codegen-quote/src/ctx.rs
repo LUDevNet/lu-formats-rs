@@ -1,9 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use kaitai_struct_types::{TypeRef, WellKnownTypeRef};
-
 use crate::{
-    r#type::{Enum, ObligationTree, Type, TypeDep},
+    r#type::{Enum, ObligationTree, ResolvedType, Type, TypeDep},
     Module,
 };
 
@@ -47,16 +45,12 @@ impl NamingContext {
         self.types.get_mut(self.root.as_ref()?)
     }
 
-    pub fn need_lifetime(&self, type_ref: &TypeRef) -> bool {
-        match type_ref {
-            TypeRef::WellKnown(WellKnownTypeRef::Str) => true,
-            TypeRef::WellKnown(WellKnownTypeRef::StrZ) => true,
-            TypeRef::WellKnown(_) => false,
-            TypeRef::Named(n) => self.resolve(n).is_some_and(|v| v.needs_lifetime),
-            TypeRef::Dynamic {
-                switch_on: _,
-                cases: _,
-            } => todo!(),
+    pub fn need_lifetime(&self, ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Bytes { .. } => true,
+            ResolvedType::Str { .. } => true,
+            ResolvedType::User(n) => self.resolve(n).is_some_and(|v| v.needs_lifetime),
+            _ => false,
         }
     }
 
