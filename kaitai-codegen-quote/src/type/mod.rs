@@ -64,7 +64,19 @@ impl Default for TypeKind {
 
 #[derive(Debug, Clone, Default)]
 pub struct TypeDep {
+    /// These fields unconditionally require the dependency
     pub(crate) fields: BTreeSet<String>,
+    /// These fields may require the dependency (i.e. via switch-on [`TypeRef`])
+    pub(crate) maybe_fields: BTreeSet<String>,
+}
+
+impl TypeDep {
+    /// Check whether the type of dependency encoded in this field
+    /// implies that root obligations of the dependency also apply
+    /// to the dependent.
+    pub(crate) fn should_merge_root_obligation(&self) -> bool {
+        !self.fields.is_empty() // at least on required field
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -83,9 +95,8 @@ pub struct Type {
     pub field_generics: BTreeMap<String, FieldGenerics>,
     pub depends_on: BTreeMap<String, TypeDep>,
 
-    /// Map from user-type id to a set of uses
-    pub may_depend_on: BTreeMap<String, TypeDep>,
-
+    // /// Map from user-type id to a set of uses
+    // pub may_depend_on: BTreeMap<String, TypeDep>,
     /// Whether this type encodes a variable length string
     kind: TypeKind,
 
@@ -122,7 +133,6 @@ impl Type {
             kind: TypeKind::detect(key, seq),
 
             depends_on: BTreeMap::new(),
-            may_depend_on: BTreeMap::new(),
 
             instances: Vec::new(),
             fields: Vec::new(),
@@ -206,18 +216,18 @@ impl Type {
     fn push_instances_elem(&mut self, key: &str, value: &Attribute) {
         let f = Field::new(key, value);
         if let ResolvedTypeKind::User(n) = &f.resolved_ty().kind {
-            self.may_depend_on
+            self.depends_on
                 .entry(n.to_owned())
                 .or_default()
-                .fields
+                .maybe_fields
                 .insert(key.to_owned());
         } else if let ResolvedTypeKind::Dynamic(_s, cases) = &f.resolved_ty().kind {
             for case in cases {
                 if let ResolvedTypeKind::User(n) = &case.ty.kind {
-                    self.may_depend_on
+                    self.depends_on
                         .entry(n.to_owned())
                         .or_default()
-                        .fields
+                        .maybe_fields
                         .insert(key.to_owned());
                 }
             }
@@ -236,10 +246,10 @@ impl Type {
         let mut fg_cases = Vec::<Case>::new();
         for case in cases {
             if let ResolvedTypeKind::User(n) = &case.ty.kind {
-                self.may_depend_on
+                self.depends_on
                     .entry(n.to_owned())
                     .or_default()
-                    .fields
+                    .maybe_fields
                     .insert(orig_attr_id.to_owned());
                 fg_depends_on.insert(n.clone());
             }

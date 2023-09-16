@@ -249,7 +249,7 @@ fn codegen_instance_fn(
         Err(_) => (quote!(()), quote!(todo!())),
     };
     Ok(quote!(
-        pub fn #id<'a>(&self, input: &'a [u8]) -> ::nom::IResult<&'a [u8], #ty> {
+        pub fn #id<'a>(&self, _input: &'a [u8]) -> ::nom::IResult<&'a [u8], #ty> {
             #parser
         }
     ))

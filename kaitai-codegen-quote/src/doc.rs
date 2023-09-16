@@ -97,7 +97,7 @@ pub(crate) fn doc_struct(
     let doc_parents = doc_type_list(nc, "Parents", &self_ty.parents);
     let doc_maybe_parents = doc_type_list(nc, "Maybe parents", &self_ty.maybe_parents);
     let doc_depends_on = doc_type_map(nc, "Depends on", &self_ty.depends_on);
-    let doc_may_depend_on = doc_type_map(nc, "May depend on", &self_ty.may_depend_on);
+    //let doc_may_depend_on = doc_type_map(nc, "May depend on", &self_ty.may_depend_on);
     let doc_refs = doc_ref.map(StringOrArray::as_slice).unwrap_or(&[]);
     let doc_root_obligations = self_ty.root_obligations.doc("_root");
     let doc_parent_obligations = self_ty.parent_obligations.doc("_parent");
@@ -109,7 +109,7 @@ pub(crate) fn doc_struct(
         #doc_parents
         #doc_maybe_parents
         #doc_depends_on
-        #doc_may_depend_on
+        //#doc_may_depend_on
         #doc_root_obligations
         #doc_parent_obligations
     )

@@ -79,16 +79,14 @@ impl NamingContext {
         // _is_ a parent of a nested root obligation e.g. `_root.fib_chunk.data.version`
         for (dep, info) in &t.depends_on {
             path.push(info);
-            self.merge_root_obligation(&mut o, dep, in_stack, path, results);
-            path.pop();
-        }
-        for (dep, info) in &t.may_depend_on {
-            path.push(info);
-            self.merge_root_obligation(&mut o, dep, in_stack, path, results);
+            if let Some(r) = self.merge_root_obligation(dep, in_stack, path, results) {
+                if info.should_merge_root_obligation() {
+                    o.union(&r);
+                }
+            }
             path.pop();
         }
         if !t.is_root {
-            // TODO: remove current path
             o.mark_local(path);
             results.entry(id.to_owned()).or_default().union(&o);
         }
@@ -97,17 +95,19 @@ impl NamingContext {
 
     fn merge_root_obligation<'a>(
         &'a self,
-        o: &mut ObligationTree,
         dep: &'a str,
         in_stack: &mut BTreeSet<&'a str>,
         path: &mut Vec<&'a TypeDep>,
         results: &mut BTreeMap<String, ObligationTree>,
-    ) {
+    ) -> Option<ObligationTree> {
         let t = self.resolve(dep).expect(dep);
         if t.source_mod.is_none() && !in_stack.contains(dep) {
             in_stack.insert(dep);
-            o.union(&self.merge_root_obligations(path, dep, t, in_stack, results));
+            let r = self.merge_root_obligations(path, dep, t, in_stack, results);
             in_stack.remove(dep);
+            Some(r)
+        } else {
+            None
         }
     }
 
@@ -143,14 +143,15 @@ impl NamingContext {
         let mut maybe_dependencies: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (s, ty) in &self.types {
             if ty.source_mod.is_none() {
-                for dep in ty.depends_on.keys() {
-                    dependencies.entry(dep.clone()).or_default().push(s.clone());
-                }
-                for dep in ty.may_depend_on.keys() {
-                    maybe_dependencies
-                        .entry(dep.clone())
-                        .or_default()
-                        .push(s.clone());
+                for (dep, value) in &ty.depends_on {
+                    if !value.fields.is_empty() {
+                        &mut dependencies
+                    } else {
+                        &mut maybe_dependencies
+                    }
+                    .entry(dep.clone())
+                    .or_default()
+                    .push(s.clone());
                 }
             }
         }
