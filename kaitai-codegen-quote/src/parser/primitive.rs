@@ -1,4 +1,4 @@
-use kaitai_struct_types::{EndianSpec, IntTypeRef, WellKnownTypeRef};
+use kaitai_struct_types::{EndianSpec, FloatTypeRef, IntTypeRef, WellKnownTypeRef};
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
@@ -85,15 +85,17 @@ pub fn wk_parser(w: &WellKnownTypeRef, size: Option<&str>, p_endian: &Ident) -> 
                 EndianSpec::Big => quote!(::nom::number::complete::be_i64),
             },
         },
-        WellKnownTypeRef::F4(e) => match e {
-            EndianSpec::Implicit => quote!(::nom::number::complete::f32(#p_endian)),
-            EndianSpec::Little => quote!(::nom::number::complete::le_f32),
-            EndianSpec::Big => quote!(::nom::number::complete::be_f32),
-        },
-        WellKnownTypeRef::F8(e) => match e {
-            EndianSpec::Implicit => quote!(::nom::number::complete::f64(#p_endian)),
-            EndianSpec::Little => quote!(::nom::number::complete::le_f64),
-            EndianSpec::Big => quote!(::nom::number::complete::be_f64),
+        WellKnownTypeRef::Float(f) => match f {
+            FloatTypeRef::Float4(e) => match e {
+                EndianSpec::Implicit => quote!(::nom::number::complete::f32(#p_endian)),
+                EndianSpec::Little => quote!(::nom::number::complete::le_f32),
+                EndianSpec::Big => quote!(::nom::number::complete::be_f32),
+            },
+            FloatTypeRef::Float8(e) => match e {
+                EndianSpec::Implicit => quote!(::nom::number::complete::f64(#p_endian)),
+                EndianSpec::Little => quote!(::nom::number::complete::le_f64),
+                EndianSpec::Big => quote!(::nom::number::complete::be_f64),
+            },
         },
         WellKnownTypeRef::Str => {
             if let Some(size_expr) = size {

@@ -157,76 +157,67 @@ fn codegen_type_ref_parse(
     p_endian: &Ident,
 ) -> TokenStream {
     let in_parent = false;
-    if let ResolvedTypeKind::Enum(e, w) = &resolved_ty.kind {
-        let e = nc.get_enum(e).unwrap();
-        let i_enum = &e.ident;
-        let q_parser = primitive::wk_parser(w, size, p_endian);
-        return quote!(::nom::combinator::map_res(#q_parser, #i_enum::try_from));
-    }
     match ty {
         TypeRef::WellKnown(w) => primitive::wk_parser(w, size, p_endian),
         TypeRef::Named(n) => {
             let _named_ty = nc.resolve(n).unwrap();
             user_type(nc, _named_ty, self_ty.is_root, in_parent, p_endian)
         }
-        TypeRef::Dynamic { switch_on, cases } => {
-            match &resolved_ty.kind {
-                ResolvedTypeKind::Dynamic(_, _) => {
-                    let id = type_ref_id.unwrap();
-                    let fg = self_ty.field_generics.get(id).expect(id);
-                    if fg.external {
-                        fg.parser.to_token_stream()
-                    } else {
-                        variant_parser_expr(nc, self_ty.is_root, fg, in_parent, p_endian)
-                    }
-                }
-                ResolvedTypeKind::Magic => panic!("Not a TypeRef::Dynamic"),
-                ResolvedTypeKind::User(_) => panic!("Not a TypeRef::Dynamic"),
-                ResolvedTypeKind::Enum(_, _) => panic!("Not a TypeRef::Dynamic"),
-                ResolvedTypeKind::SInt { .. } => panic!("Not a TypeRef::Dynamic"),
-                ResolvedTypeKind::Float { .. } => panic!("Not a TypeRef::Dynamic"),
-                ResolvedTypeKind::Str { .. } => panic!("Not a TypeRef::Dynamic"),
-                ResolvedTypeKind::Bytes { .. } => panic!("Not a TypeRef::Dynamic"),
-                ResolvedTypeKind::UInt { width, .. } => {
-                    let switch_expr = match switch_on {
-                        AnyScalar::Null => todo!(),
-                        AnyScalar::Bool(_) => todo!(),
-                        AnyScalar::String(expr) => expr::codegen_expr_str(expr),
-                        AnyScalar::UInt(_) => todo!(),
-                    };
-                    let ty = uint_ty(*width);
-                    let mut q_cases = Vec::<TokenStream>::new();
-                    for (k, v) in cases {
-                        let case = match k {
-                            AnyScalar::Bool(b) => quote!(#b),
-                            AnyScalar::Null => todo!(),
-                            AnyScalar::String(_) => todo!(),
-                            AnyScalar::UInt(_) => todo!(),
-                        };
-                        let parser = match v {
-                            TypeRef::WellKnown(w) => primitive::wk_parser(w, None, p_endian),
-                            TypeRef::Named(_) => todo!(),
-                            TypeRef::Dynamic { .. } => todo!(),
-                        };
-                        q_cases.push(
-                            quote!(#case => Box::new(::nom::combinator::map(#parser, #ty::from))),
-                        );
-                    }
-                    let exhaustive = true;
-                    if !exhaustive {
-                        q_cases.push(quote!( _ => Box::new(::nom::combinator::map(|_| todo!(), |x: u8| x as #ty))));
-                    }
-
-                    quote!({
-                        let __parser: Box<dyn FnMut(&'a [u8]) -> ::nom::IResult<&'a[u8], #ty>> = match #switch_expr {
-                            #(#q_cases,)*
-                        };
-                        __parser
-                    })
-                    /**/
+        TypeRef::Dynamic { switch_on, cases } => match &resolved_ty.kind {
+            ResolvedTypeKind::Dynamic(_, _) => {
+                let id = type_ref_id.unwrap();
+                let fg = self_ty.field_generics.get(id).expect(id);
+                if fg.external {
+                    fg.parser.to_token_stream()
+                } else {
+                    variant_parser_expr(nc, self_ty.is_root, fg, in_parent, p_endian)
                 }
             }
-        }
+            ResolvedTypeKind::Magic => panic!("Not a TypeRef::Dynamic"),
+            ResolvedTypeKind::User(_) => panic!("Not a TypeRef::Dynamic"),
+            ResolvedTypeKind::Enum(_, _) => panic!("Not a TypeRef::Dynamic"),
+            ResolvedTypeKind::SInt { .. } => panic!("Not a TypeRef::Dynamic"),
+            ResolvedTypeKind::Float { .. } => panic!("Not a TypeRef::Dynamic"),
+            ResolvedTypeKind::Str { .. } => panic!("Not a TypeRef::Dynamic"),
+            ResolvedTypeKind::Bytes { .. } => panic!("Not a TypeRef::Dynamic"),
+            ResolvedTypeKind::UInt { width, .. } => {
+                let switch_expr = match switch_on {
+                    AnyScalar::Null => todo!(),
+                    AnyScalar::Bool(_) => todo!(),
+                    AnyScalar::String(expr) => expr::codegen_expr_str(expr),
+                    AnyScalar::UInt(_) => todo!(),
+                };
+                let ty = uint_ty(*width);
+                let mut q_cases = Vec::<TokenStream>::new();
+                for (k, v) in cases {
+                    let case = match k {
+                        AnyScalar::Bool(b) => quote!(#b),
+                        AnyScalar::Null => todo!(),
+                        AnyScalar::String(_) => todo!(),
+                        AnyScalar::UInt(_) => todo!(),
+                    };
+                    let parser = match v {
+                        TypeRef::WellKnown(w) => primitive::wk_parser(w, None, p_endian),
+                        TypeRef::Named(_) => todo!(),
+                        TypeRef::Dynamic { .. } => todo!(),
+                    };
+                    q_cases.push(
+                        quote!(#case => Box::new(::nom::combinator::map(#parser, #ty::from))),
+                    );
+                }
+                let exhaustive = true;
+                if !exhaustive {
+                    q_cases.push(quote!( _ => Box::new(::nom::combinator::map(|_| todo!(), |x: u8| x as #ty))));
+                }
+
+                quote!({
+                    let __parser: Box<dyn FnMut(&'a [u8]) -> ::nom::IResult<&'a[u8], #ty>> = match #switch_expr {
+                        #(#q_cases,)*
+                    };
+                    __parser
+                })
+            }
+        },
     }
 }
 
@@ -240,15 +231,23 @@ fn codegen_attr_parse(
 ) -> TokenStream {
     let f_ident = field.ident();
     let mut parser = if let Some(ty) = &attr.ty {
-        codegen_type_ref_parse(
-            attr.id.as_deref(),
-            nc,
-            ty,
-            attr.size.as_deref(),
-            self_ty,
-            field.resolved_ty(),
-            p_endian,
-        )
+        let size = attr.size.as_deref();
+        if let ResolvedTypeKind::Enum(e, w) = &field.resolved_ty().kind {
+            let e = nc.get_enum(e).unwrap();
+            let i_enum = &e.ident;
+            let q_parser = primitive::wk_parser(w, size, p_endian);
+            quote!(::nom::combinator::map_res(#q_parser, #i_enum::try_from))
+        } else {
+            codegen_type_ref_parse(
+                attr.id.as_deref(),
+                nc,
+                ty,
+                size,
+                self_ty,
+                field.resolved_ty(),
+                p_endian,
+            )
+        }
     } else if let Some(contents) = &attr.contents {
         let tag = match contents {
             Contents::String(s) => quote!(#s),

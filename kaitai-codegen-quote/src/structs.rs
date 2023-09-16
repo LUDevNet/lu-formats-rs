@@ -1,10 +1,7 @@
 use kaitai_struct_types::{Attribute, StringOrArray};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io,
-};
+use std::collections::BTreeSet;
 
 use crate::{
     ctx::NamingContext,
@@ -13,6 +10,11 @@ use crate::{
         self, Case, Field, FieldGenerics, ResolvedType, ResolvedTypeCount, ResolvedTypeKind, Type,
     },
 };
+
+#[derive(Debug)]
+pub enum Error {
+    RequiredFieldGenerics,
+}
 
 fn codegen_named_ty(nc: &NamingContext, n: &str) -> TokenStream {
     let ty = nc.resolve(n).unwrap();
@@ -66,8 +68,8 @@ fn codegen_cases(
     // Field name or enum variant
     discriminant: &Ident,
     field_generics: Option<&FieldGenerics>,
-) -> TokenStream {
-    let gen = field_generics.unwrap();
+) -> Result<TokenStream, Error> {
+    let gen = field_generics.ok_or(Error::RequiredFieldGenerics)?;
     let g = &gen.type_;
     let t = &gen.trait_;
     if gen.external {
@@ -84,7 +86,7 @@ fn codegen_cases(
     let enclosing_type = gen.var_enum.to_string();
     for (i, case_type) in cases.iter().enumerate() {
         let n = gen.cases[i].ident();
-        let inner = codegen_resolved_ty(nc, &case_type.ty, &enclosing_type, tc, n, field_generics);
+        let inner = codegen_resolved_ty(nc, &case_type.ty, &enclosing_type, tc, n, field_generics)?;
         enum_cases.push(quote! {
             #n(#inner),
         });
@@ -128,11 +130,11 @@ fn codegen_cases(
 
         #(#trait_impl_cases)*
     });
-    if gen.external {
+    Ok(if gen.external {
         quote!(#g)
     } else {
         quote!(#v_use)
-    }
+    })
 }
 
 fn codegen_attr_ty(
@@ -140,14 +142,13 @@ fn codegen_attr_ty(
     self_ty: &Type,
     field: &Field,
     tc: &mut TyContext,
-) -> io::Result<TokenStream> {
+) -> Result<TokenStream, Error> {
     let attr_id = field.ident();
     let orig_attr_id = field.id();
     let fg = self_ty.field_generics.get(orig_attr_id);
     let resolved = field.resolved_ty();
     let enclosing_type = self_ty.rust_struct_name.as_str();
-    let ty = codegen_resolved_ty(nc, resolved, enclosing_type, tc, attr_id, fg);
-    Ok(ty)
+    codegen_resolved_ty(nc, resolved, enclosing_type, tc, attr_id, fg)
 }
 
 fn codegen_resolved_ty(
@@ -157,14 +158,14 @@ fn codegen_resolved_ty(
     tc: &mut TyContext,
     attr_id: &Ident,
     fg: Option<&FieldGenerics>,
-) -> TokenStream {
-    let inner = codegen_resolved_ty_kind(&ty.kind, enclosing_type, nc, tc, attr_id, fg);
-    match &ty.count {
+) -> Result<TokenStream, Error> {
+    let inner = codegen_resolved_ty_kind(&ty.kind, enclosing_type, nc, tc, attr_id, fg)?;
+    Ok(match &ty.count {
         ResolvedTypeCount::Required => inner,
         ResolvedTypeCount::Optional => quote!(Option<#inner>),
         ResolvedTypeCount::Variable => quote!(Vec<#inner>),
         ResolvedTypeCount::Fixed(i) => quote!([#inner; #i]),
-    }
+    })
 }
 
 fn codegen_resolved_ty_kind(
@@ -174,18 +175,18 @@ fn codegen_resolved_ty_kind(
     tc: &mut TyContext,
     attr_id: &Ident,
     fg: Option<&FieldGenerics>,
-) -> TokenStream {
+) -> Result<TokenStream, Error> {
     match ty_kind {
         ResolvedTypeKind::Dynamic(_switch_on, cases) => {
             codegen_cases(cases, nc, tc, enclosing_type, attr_id, fg)
         }
-        ResolvedTypeKind::Magic => quote!(()),
-        ResolvedTypeKind::User(n) => codegen_named_ty(nc, n),
-        ResolvedTypeKind::Enum(e, _) => nc.get_enum(e).unwrap().ident.to_token_stream(),
-        ResolvedTypeKind::UInt { width, .. } => r#type::uint_ty(*width),
-        ResolvedTypeKind::SInt { width, .. } => r#type::sint_ty(*width),
-        ResolvedTypeKind::Float { width, .. } => r#type::float_ty(*width),
-        ResolvedTypeKind::Str { .. } | ResolvedTypeKind::Bytes { .. } => quote!(&'a [u8]),
+        ResolvedTypeKind::Magic => Ok(quote!(())),
+        ResolvedTypeKind::User(n) => Ok(codegen_named_ty(nc, n)),
+        ResolvedTypeKind::Enum(e, _) => Ok(nc.get_enum(e).unwrap().ident.to_token_stream()),
+        ResolvedTypeKind::UInt { width, .. } => Ok(r#type::uint_ty(*width)),
+        ResolvedTypeKind::SInt { width, .. } => Ok(r#type::sint_ty(*width)),
+        ResolvedTypeKind::Float { width, .. } => Ok(r#type::float_ty(*width)),
+        ResolvedTypeKind::Str { .. } | ResolvedTypeKind::Bytes { .. } => Ok(quote!(&'a [u8])),
     }
 }
 
@@ -195,7 +196,7 @@ fn codegen_attr(
     self_ty: &Type,
     field: &Field,
     tc: &mut TyContext,
-) -> io::Result<TokenStream> {
+) -> Result<TokenStream, Error> {
     let attr_doc = doc::doc_attr(attr);
     let serialize_with = parser::serialize_with(attr);
 
@@ -213,7 +214,7 @@ fn codegen_struct_body(
     self_ty: &Type,
     nc: &NamingContext,
     tc: &mut TyContext,
-) -> Result<TokenStream, io::Error> {
+) -> Result<TokenStream, Error> {
     if self_ty.is_var_len_str() {
         return Ok(quote!((pub &'a [u8]);));
     } else if self_ty.is_newtype() {
@@ -240,14 +241,16 @@ fn codegen_instance_fn(
     _nc: &NamingContext,
     _self_ty: &Type,
     instance: &Field,
-    _attr: &Attribute,
     _tc: &mut TyContext,
-) -> io::Result<TokenStream> {
+) -> Result<TokenStream, Error> {
     let id = format_ident!("parse_{}", instance.ident());
-    //let ty = codegen_attr_ty(nc, attr, self_ty, instance, tc)?;
+    let (ty, parser) = match codegen_attr_ty(_nc, _self_ty, instance, _tc) {
+        Ok(ty) => (ty, quote!(todo!())),
+        Err(_) => (quote!(()), quote!(todo!())),
+    };
     Ok(quote!(
-        pub fn #id<'a>(&self, input: &'a [u8]) -> ::nom::IResult<&'a [u8], ()> {
-            Ok((input, ()))
+        pub fn #id<'a>(&self, input: &'a [u8]) -> ::nom::IResult<&'a [u8], #ty> {
+            #parser
         }
     ))
 }
@@ -257,9 +260,8 @@ pub(super) fn codegen_struct(
     doc: Option<&str>,
     doc_ref: Option<&StringOrArray>,
     seq: &[Attribute],
-    instances: &BTreeMap<String, Attribute>,
     self_ty: &Type,
-) -> io::Result<TokenStream> {
+) -> Result<TokenStream, Error> {
     let q_doc = doc::doc_struct(self_ty, nc, doc, doc_ref);
     let needs_lifetime = self_ty.needs_lifetime;
 
@@ -275,8 +277,7 @@ pub(super) fn codegen_struct(
     let q_parser = parser::codegen_parser_fn(self_ty, seq, &tc, nc);
 
     for instance in &self_ty.instances {
-        let attr = instances.get(instance.id()).unwrap();
-        let _fn = codegen_instance_fn(nc, self_ty, instance, attr, &mut tc)?;
+        let _fn = codegen_instance_fn(nc, self_ty, instance, &mut tc)?;
         q_impls.push(_fn)
     }
 

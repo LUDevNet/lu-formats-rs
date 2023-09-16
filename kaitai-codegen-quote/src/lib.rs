@@ -81,8 +81,7 @@ impl Context<'_> {
             let doc = spec.doc.as_deref();
             let doc_ref = spec.doc_ref.as_ref();
             let struct_ty = nc.resolve(key).unwrap();
-            let st =
-                structs::codegen_struct(&nc, doc, doc_ref, &spec.seq, &spec.instances, struct_ty)?;
+            let st = structs::codegen_struct(&nc, doc, doc_ref, &spec.seq, struct_ty).unwrap();
             structs.push(st);
         }
 
@@ -100,7 +99,6 @@ impl Context<'_> {
                 schema.doc.as_deref(),
                 schema.doc_ref.as_ref(),
                 &schema.seq,
-                &schema.instances,
                 root_ty,
             )
             .unwrap();

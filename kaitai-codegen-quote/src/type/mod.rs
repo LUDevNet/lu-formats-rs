@@ -6,11 +6,13 @@ use kaitai_struct_types::{Attribute, Endian, KsySchema, TypeRef, TypeSpec, WellK
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
+mod field;
 mod field_generics;
 mod obligations;
 mod resolved;
 
 pub use self::resolved::{ResolvedType, ResolvedTypeCount, ResolvedTypeKind};
+pub use field::Field;
 pub use field_generics::FieldGenerics;
 pub use obligations::ObligationTree;
 
@@ -177,10 +179,10 @@ impl Type {
 
     fn push_seq_elem(&mut self, a: &Attribute) {
         let orig_attr_id = a.id.as_deref().unwrap();
-        let f = Field::new(orig_attr_id, ResolvedType::of_attribute(a));
+        let f = Field::new(orig_attr_id, a);
 
-        self.needs_lifetime = self.needs_lifetime || f.resolved_type.kind.needs_lifetime_a_priori();
-        if let ResolvedTypeKind::User(n) = &f.resolved_type.kind {
+        self.needs_lifetime = self.needs_lifetime || f.resolved_ty().kind.needs_lifetime_a_priori();
+        if let ResolvedTypeKind::User(n) = &f.resolved_ty().kind {
             self.depends_on
                 .entry(n.to_owned())
                 .or_default()
@@ -188,7 +190,7 @@ impl Type {
                 .insert(orig_attr_id.to_owned());
         }
 
-        if let ResolvedTypeKind::Dynamic(s, cases) = &f.resolved_type.kind {
+        if let ResolvedTypeKind::Dynamic(s, cases) = &f.resolved_ty().kind {
             let fg = self.new_field_generics(orig_attr_id, cases, s);
             self.field_generics.insert(orig_attr_id.to_string(), fg);
         }
@@ -202,14 +204,14 @@ impl Type {
     }
 
     fn push_instances_elem(&mut self, key: &str, value: &Attribute) {
-        let f = Field::new(key, ResolvedType::of_attribute(value));
-        if let ResolvedTypeKind::User(n) = &f.resolved_type.kind {
+        let f = Field::new(key, value);
+        if let ResolvedTypeKind::User(n) = &f.resolved_ty().kind {
             self.may_depend_on
                 .entry(n.to_owned())
                 .or_default()
                 .fields
                 .insert(key.to_owned());
-        } else if let ResolvedTypeKind::Dynamic(_s, cases) = &f.resolved_type.kind {
+        } else if let ResolvedTypeKind::Dynamic(_s, cases) = &f.resolved_ty().kind {
             for case in cases {
                 if let ResolvedTypeKind::User(n) = &case.ty.kind {
                     self.may_depend_on
@@ -290,39 +292,6 @@ impl Type {
     /// For a given `id` within this type, find the ([`ResolvedType`]) that represents type.
     pub(crate) fn type_of_field(&self, name: &str) -> Option<&ResolvedType> {
         self.find_field(name).map(Field::resolved_ty)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Field {
-    ident: Ident,
-    id: String,
-
-    resolved_type: ResolvedType,
-}
-
-impl Field {
-    pub(crate) fn new(orig_attr_id: &str, resolved_type: ResolvedType) -> Self {
-        Self {
-            ident: ident_of(orig_attr_id),
-            id: orig_attr_id.to_owned(),
-            resolved_type,
-        }
-    }
-
-    /// ID for this field
-    pub fn resolved_ty(&self) -> &ResolvedType {
-        &self.resolved_type
-    }
-
-    /// ID for this field
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    /// Rust identifier for this field
-    pub fn ident(&self) -> &Ident {
-        &self.ident
     }
 }
 

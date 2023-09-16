@@ -78,8 +78,10 @@ impl ResolvedTypeKind {
                 width: s.bytes(),
                 endian: s.endian(),
             },
-            WellKnownTypeRef::F4(endian) => ResolvedTypeKind::Float { width: 4, endian },
-            WellKnownTypeRef::F8(endian) => ResolvedTypeKind::Float { width: 8, endian },
+            WellKnownTypeRef::Float(f) => ResolvedTypeKind::Float {
+                width: f.bytes(),
+                endian: f.endian(),
+            },
             WellKnownTypeRef::Str => ResolvedTypeKind::Str {
                 encoding: (),
                 zero_terminator: false,
