@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     common::{Bool, Boolean, Lot, ObjectId, QuaternionWxyz, U1Str, U1Wstr, U4Wstr},
     files::luz::{
@@ -68,7 +70,7 @@ fn test_camera_data() {
         Ok((
             EMPTY,
             CameraData {
-                next_path: U1Wstr(&[b'A', 0x00, b'B', 0x00, b'C', 0x00]),
+                next_path: U1Wstr(Cow::Borrowed(&[b'A', 0x00, b'B', 0x00, b'C', 0x00])),
                 rotate_player: Some(Bool(Boolean::True))
             }
         ))
@@ -78,7 +80,7 @@ fn test_camera_data() {
         Ok((
             &[0x01][..],
             CameraData {
-                next_path: U1Wstr(&[b'A', 0x00, b'B', 0x00, b'C', 0x00]),
+                next_path: U1Wstr(Cow::Borrowed(&[b'A', 0x00, b'B', 0x00, b'C', 0x00])),
                 rotate_player: None
             }
         ))
@@ -130,8 +132,8 @@ fn test_lnv_entry() {
         Ok((
             EMPTY,
             LnvEntry {
-                name: U1Wstr(b"A\0B\0C\0"),
-                type_value: U1Wstr(b"D\0E\0F\0G\0")
+                name: U1Wstr(Cow::Borrowed(b"A\0B\0C\0")),
+                type_value: U1Wstr(Cow::Borrowed(b"D\0E\0F\0G\0"))
             }
         ))
     )
@@ -152,12 +154,12 @@ fn test_lnv() {
                 num_entries: 2,
                 entries: vec![
                     LnvEntry {
-                        name: U1Wstr(b"A\0B\0C\0"),
-                        type_value: U1Wstr(b"D\0E\0F\0G\0")
+                        name: U1Wstr(Cow::Borrowed(b"A\0B\0C\0")),
+                        type_value: U1Wstr(Cow::Borrowed(b"D\0E\0F\0G\0"))
                     },
                     LnvEntry {
-                        name: U1Wstr(b"A\0B\0C\0"),
-                        type_value: U1Wstr(b"D\0E\0F\0G\0")
+                        name: U1Wstr(Cow::Borrowed(b"A\0B\0C\0")),
+                        type_value: U1Wstr(Cow::Borrowed(b"D\0E\0F\0G\0"))
                     }
                 ]
             }
@@ -185,7 +187,7 @@ fn test_platform_data() {
         Ok((
             EMPTY,
             PlatformData {
-                traveling_audio_guid: Some(U1Wstr(b"A\0C\0")),
+                traveling_audio_guid: Some(U1Wstr(Cow::Borrowed(b"A\0C\0"))),
                 time_based_movement: None
             }
         ))
@@ -253,8 +255,8 @@ fn test_platform_waypoint_data() {
                 lock_player: Bool(Boolean::True),
                 speed: 0.25,
                 wait: 0.75,
-                depart_audio_guid: Some(U1Wstr(b"A\0B\0C\0")),
-                arrive_audio_guid: Some(U1Wstr(b"X\0Y\0Z\0"))
+                depart_audio_guid: Some(U1Wstr(Cow::Borrowed(b"A\0B\0C\0"))),
+                arrive_audio_guid: Some(U1Wstr(Cow::Borrowed(b"X\0Y\0Z\0")))
             }
         ))
     );
@@ -302,8 +304,8 @@ fn test_property_data() {
                 price: 50,
                 time: 100,
                 associated_zone: 1200,
-                name: Some(U1Wstr(b"N\0a\0m\0e\0")),
-                description: Some(U4Wstr(b"D\0e\0s\0c\0r\0")),
+                name: Some(U1Wstr(Cow::Borrowed(b"N\0a\0m\0e\0"))),
+                description: Some(U4Wstr(Cow::Borrowed(b"D\0e\0s\0c\0r\0"))),
                 property_type: None,
                 clone_limit: None,
                 reputation_multiplier: None,
@@ -325,8 +327,8 @@ fn test_property_data() {
                 price: 50,
                 time: 100,
                 associated_zone: 1200,
-                name: Some(U1Wstr(b"N\0a\0m\0e\0")),
-                description: Some(U4Wstr(b"D\0e\0s\0c\0r\0")),
+                name: Some(U1Wstr(Cow::Borrowed(b"N\0a\0m\0e\0"))),
+                description: Some(U4Wstr(Cow::Borrowed(b"D\0e\0s\0c\0r\0"))),
                 property_type: Some(PropertyType::Lup),
                 clone_limit: None,
                 reputation_multiplier: None,
@@ -350,8 +352,8 @@ fn test_property_data() {
                 price: 50,
                 time: 100,
                 associated_zone: 1200,
-                name: Some(U1Wstr(b"N\0a\0m\0e\0")),
-                description: Some(U4Wstr(b"D\0e\0s\0c\0r\0")),
+                name: Some(U1Wstr(Cow::Borrowed(b"N\0a\0m\0e\0"))),
+                description: Some(U4Wstr(Cow::Borrowed(b"D\0e\0s\0c\0r\0"))),
                 property_type: Some(PropertyType::Lup),
                 clone_limit: Some(20000),
                 reputation_multiplier: Some(5.0),
@@ -380,8 +382,8 @@ fn test_property_data() {
                 price: 50,
                 time: 100,
                 associated_zone: 1200,
-                name: Some(U1Wstr(b"N\0a\0m\0e\0")),
-                description: Some(U4Wstr(b"D\0e\0s\0c\0r\0")),
+                name: Some(U1Wstr(Cow::Borrowed(b"N\0a\0m\0e\0"))),
+                description: Some(U4Wstr(Cow::Borrowed(b"D\0e\0s\0c\0r\0"))),
                 property_type: Some(PropertyType::Lup),
                 clone_limit: Some(20000),
                 reputation_multiplier: Some(5.0),
@@ -669,7 +671,7 @@ fn test_transition_info() {
         Ok((
             EMPTY,
             TransitionInfo {
-                unknown1: Some(U1Str(EMPTY)),
+                unknown1: Some(U1Str(Cow::Borrowed(EMPTY))),
                 unknown2: Some(0.5),
                 transition_points: vec![p1.clone(), p2.clone()]
             }
@@ -689,7 +691,7 @@ fn test_transition_info() {
         Ok((
             EMPTY,
             TransitionInfo {
-                unknown1: Some(U1Str(EMPTY)),
+                unknown1: Some(U1Str(Cow::Borrowed(EMPTY))),
                 unknown2: Some(0.5),
                 transition_points: vec![p1.clone(), p2.clone(), p1.clone(), p1.clone(), p1.clone()]
             }
@@ -703,7 +705,7 @@ fn test_transition_info() {
         Ok((
             EMPTY,
             TransitionInfo {
-                unknown1: Some(U1Str(EMPTY)),
+                unknown1: Some(U1Str(Cow::Borrowed(EMPTY))),
                 unknown2: Some(0.5),
                 transition_points: vec![p1.clone(), p2.clone()]
             }
@@ -745,8 +747,8 @@ fn test_path() {
             EMPTY,
             Path {
                 version: 1,
-                name: U1Wstr(b"N\0a\0m\0e\0"),
-                type_name: Some(U1Wstr(b"A\0Z\0")),
+                name: U1Wstr(Cow::Borrowed(b"N\0a\0m\0e\0")),
+                type_name: Some(U1Wstr(Cow::Borrowed(b"A\0Z\0"))),
                 r#type: PathType::Npc,
                 flags: 100,
                 behavior: PathBehavior::Once,

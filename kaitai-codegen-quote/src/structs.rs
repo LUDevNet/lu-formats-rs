@@ -118,7 +118,7 @@ fn codegen_cases(
 
         #[doc = #var_enum_doc]
         #[derive(Debug, Clone, PartialEq)]
-        #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
+        #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
         #[cfg_attr(feature = "serde", serde(untagged))] // FIXME: make conditional?
         pub enum #v_use {
             #(#enum_cases)*
@@ -186,7 +186,9 @@ fn codegen_resolved_ty_kind(
         ResolvedTypeKind::UInt { width, .. } => Ok(r#type::uint_ty(*width)),
         ResolvedTypeKind::SInt { width, .. } => Ok(r#type::sint_ty(*width)),
         ResolvedTypeKind::Float { width, .. } => Ok(r#type::float_ty(*width)),
-        ResolvedTypeKind::Str { .. } | ResolvedTypeKind::Bytes { .. } => Ok(quote!(&'a [u8])),
+        ResolvedTypeKind::Str { .. } | ResolvedTypeKind::Bytes { .. } => {
+            Ok(quote!(::std::borrow::Cow<'a, [u8]>))
+        }
     }
 }
 
@@ -216,7 +218,7 @@ fn codegen_struct_body(
     tc: &mut TyContext,
 ) -> Result<TokenStream, Error> {
     if self_ty.is_var_len_str() {
-        return Ok(quote!((pub &'a [u8]);));
+        return Ok(quote!((pub ::std::borrow::Cow<'a, [u8]>);));
     } else if self_ty.is_newtype() {
         let field = &self_ty.fields[0];
         let ty = codegen_attr_ty(nc, self_ty, field, tc).unwrap();
@@ -288,7 +290,7 @@ pub(super) fn codegen_struct(
 
     let string_from_impl = self_ty.is_var_len_str().then(|| {
         let encoding = seq[1].encoding.as_deref().unwrap().to_ascii_lowercase();
-        let input = quote!(s.0);
+        let input = quote!(::std::convert::AsRef::as_ref(&s.0));
         let q_impl = match encoding.as_str() {
             "utf-16le" => quote!(char::decode_utf16(#input.chunks(2).map(|s| u16::from_le_bytes([s[0], s[1]])))
             .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
@@ -313,7 +315,7 @@ pub(super) fn codegen_struct(
 
     let q = quote! {
         #q_doc
-        #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
+        #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
         #serde_into
         #[derive(Debug, Clone, PartialEq)]
         pub struct #id #gen #q_body

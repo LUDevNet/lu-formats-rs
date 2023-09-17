@@ -100,13 +100,15 @@ pub fn wk_parser(w: &WellKnownTypeRef, size: Option<&str>, p_endian: &Ident) -> 
         WellKnownTypeRef::Str => {
             if let Some(size_expr) = size {
                 let expr = super::expr::codegen_expr_str(size_expr);
-                quote!(::nom::bytes::complete::take(#expr))
+                quote!(::nom::combinator::map(::nom::bytes::complete::take(#expr), ::std::borrow::Cow::Borrowed))
             } else {
-                quote!(::nom::bytes::complete::take(0x70D0 as usize))
+                todo!("str without size")
+                //quote!(::nom::bytes::complete::take(0x70D0 as usize))
             }
         } // FIXME?
-        WellKnownTypeRef::StrZ => quote!(::nom::bytes::complete::take_until(
-            ::std::slice::from_ref(&0)
+        WellKnownTypeRef::StrZ => quote!(::nom::combinator::map(
+            ::nom::bytes::complete::take_until(::std::slice::from_ref(&0)),
+            ::std::borrow::Cow::Borrowed
         )),
     }
 }

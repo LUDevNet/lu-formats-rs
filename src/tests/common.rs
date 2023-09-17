@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     common::{
         parse_quaternion, parse_u1_color, parse_u1_str, parse_u4_str, Quaternion, U1Color, U1Str,
@@ -91,12 +93,18 @@ fn test_u1color() {
 fn test_u1_str() {
     let bytes = vec![0x03, b'A', b'B', b'C'];
 
-    assert_eq!(parse_u1_str(&bytes).finish(), Ok((EMPTY, U1Str(b"ABC"))))
+    assert_eq!(
+        parse_u1_str(&bytes).finish(),
+        Ok((EMPTY, U1Str(Cow::Borrowed(b"ABC"))))
+    )
 }
 
 #[test]
 fn test_u4_str() {
     let bytes = vec![0x03, 0x00, 0x00, 0x00, b'A', b'B', b'C'];
 
-    assert_eq!(parse_u4_str(&bytes).finish(), Ok((EMPTY, U4Str(b"ABC"))))
+    assert_eq!(
+        parse_u4_str(&bytes).finish(),
+        Ok((EMPTY, U4Str(Cow::Borrowed(b"ABC"))))
+    )
 }

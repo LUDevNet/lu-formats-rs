@@ -75,7 +75,7 @@ pub(super) fn codegen_enum(name: &str, spec: &EnumSpec) -> TokenStream {
     quote! {
         #[doc = ""]
         #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-        #[cfg_attr(feature = "serde", derive(::serde::Serialize))]
+        #[cfg_attr(feature = "serde", derive(::serde::Serialize, ::serde::Deserialize))]
         pub enum #id {
             #(#values),*
         }

@@ -257,7 +257,7 @@ fn codegen_attr_parse(
         quote!(::nom::combinator::value((), ::nom::bytes::complete::tag(#tag)))
     } else if let Some(size_expr) = &attr.size {
         let size = expr::codegen_expr_str(size_expr);
-        quote!(::nom::bytes::complete::take(#size))
+        quote!(::nom::combinator::map(::nom::bytes::complete::take(#size), ::std::borrow::Cow::Borrowed))
     } else {
         todo!("{:?}", attr);
     };
