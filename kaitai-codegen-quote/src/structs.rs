@@ -291,7 +291,7 @@ pub(super) fn codegen_struct(
     let string_from_impl = self_ty.is_var_len_str().then(|| {
         let encoding = seq[1].encoding.as_deref().unwrap().to_ascii_lowercase();
         let input = quote!(::std::convert::AsRef::as_ref(&s.0));
-        let q_impl = match encoding.as_str() {
+        let q_decode_impl = match encoding.as_str() {
             "utf-16le" => quote!(char::decode_utf16(#input.chunks(2).map(|s| u16::from_le_bytes([s[0], s[1]])))
             .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
             .collect::<String>()),
@@ -301,17 +301,29 @@ pub(super) fn codegen_struct(
             "ascii" | "utf-8" => quote!(String::from_utf8_lossy(#input).into_owned()),
             _ => todo!()
         };
+        let q_encode_impl = match encoding.as_str() {
+            "utf-16le" => quote!(s.encode_utf16().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>()),
+            "utf-16be" => quote!(s.encode_utf16().flat_map(|v| v.to_be_bytes()).collect::<Vec<u8>>()),
+            "ascii" | "utf-8" => quote!(s.into_bytes()),
+            _ => todo!()
+        };
         quote!(
             impl #gen From<#id #gen> for String {
                 fn from(s: #id #gen) -> String {
-                    #q_impl
+                    #q_decode_impl
+                }
+            }
+
+            impl #gen From<String> for #id #gen {
+                fn from(s: String) -> #id #gen {
+                    Self(::std::borrow::Cow::Owned(#q_encode_impl))
                 }
             }
         )
     });
     let serde_into = self_ty
         .is_var_len_str()
-        .then(|| quote!(#[cfg_attr(feature = "serde", serde(into = "String"))]));
+        .then(|| quote!(#[cfg_attr(feature = "serde", serde(into = "String", from = "String"))]));
 
     let q = quote! {
         #q_doc

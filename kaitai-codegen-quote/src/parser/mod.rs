@@ -352,7 +352,10 @@ pub(crate) fn serialize_with(attr: &Attribute) -> Option<TokenStream> {
         let encoding = attr.encoding.as_deref().unwrap();
         if encoding.eq_ignore_ascii_case("utf-16le") {
             Some(quote!(
-                #[cfg_attr(feature = "serde", serde(serialize_with = "crate::_rt::serialize_utf16_le"))]
+                #[cfg_attr(feature = "serde", serde(
+                    serialize_with = "crate::_rt::serialize_utf16_le",
+                    deserialize_with = "crate::_rt::deserialize_utf16_le"
+                ))]
             ))
         } else if encoding.eq_ignore_ascii_case("utf-16be") {
             Some(quote!(
