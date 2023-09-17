@@ -1,26 +1,10 @@
+use crate::data::{Environment, Level};
 use lu_formats_rs::files::lvl::{
     parse_chunk, parse_editor_settings, parse_environment_data, parse_fib_data,
     parse_lighting_info, parse_lvl, parse_object_data, parse_particle_data, parse_skydome_info,
-    ChunkType, EditorSettings, FibData, LightingInfo, ObjectInfo, Particle, SkydomeInfo,
+    ChunkType, FibData, ObjectInfo, Particle,
 };
 use nom::Finish;
-use serde::Serialize;
-
-#[derive(Serialize)]
-pub struct Environment<'a> {
-    lighting_info: LightingInfo,
-    skydome_info: SkydomeInfo<'a>,
-    editor_settings: EditorSettings,
-}
-
-#[derive(Serialize)]
-pub struct Level<'a> {
-    version: u32,
-    revision: u32,
-    environment: Option<Environment<'a>>,
-    objects: Option<Vec<ObjectInfo<'a>>>,
-    particles: Option<Vec<Particle<'a>>>,
-}
 
 fn parse_environment<'a>(bytes: &'a [u8], fib_data: &FibData) -> Option<Environment<'a>> {
     if fib_data.ofs_environment_chunk == 0 {
@@ -92,8 +76,8 @@ fn parse_particles<'a>(bytes: &'a [u8], fib_data: &FibData) -> Option<Vec<Partic
     Some(particle_data.particles)
 }
 
-fn parse_level(bytes: &[u8]) -> Level<'_> {
-    let (_, lvl) = parse_lvl(&bytes).finish().expect("Failed to parse lvl");
+pub fn parse_level(bytes: &[u8]) -> Level<'_> {
+    let (_, lvl) = parse_lvl(bytes).finish().expect("Failed to parse lvl");
 
     let fib_bytes =
         &bytes[lvl.fib_chunk.data_offset as usize..][..(lvl.fib_chunk.size - 32) as usize];
@@ -101,9 +85,9 @@ fn parse_level(bytes: &[u8]) -> Level<'_> {
         .finish()
         .expect("Failed to parse fib_data");
 
-    let environment = parse_environment(&bytes, &fib_data);
-    let objects = parse_objects(&bytes, &fib_data);
-    let particles = parse_particles(&bytes, &fib_data);
+    let environment = parse_environment(bytes, &fib_data);
+    let objects = parse_objects(bytes, &fib_data);
+    let particles = parse_particles(bytes, &fib_data);
     Level {
         version: fib_data.version,
         revision: fib_data.revision,
@@ -111,11 +95,4 @@ fn parse_level(bytes: &[u8]) -> Level<'_> {
         objects,
         particles,
     }
-}
-
-fn main() {
-    let path = std::env::args().nth(1).expect("USAGE: dump-lvl FILE");
-    let bytes = std::fs::read(path).expect("Failed to read file");
-    let level = parse_level(&bytes);
-    println!("{}", serde_json::to_string(&level).unwrap());
 }
