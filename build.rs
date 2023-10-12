@@ -5,8 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use kaitai_codegen_quote::{Context, Module};
-use kaitai_struct_types::KsySchema;
+use abbau_codegen_quote::{Context, KsySchema, Module};
 use quote::{format_ident, quote, ToTokens};
 
 struct RunContext {
@@ -61,7 +60,7 @@ fn main() {
     };
     let lib_path = ctx.out_dir.join("lib.rs");
     let rt_path = ctx.out_dir.join("_rt.rs");
-    kaitai_codegen_quote::codegen_rt(&rt_path).unwrap();
+    abbau_codegen_quote::codegen_rt(&rt_path).unwrap();
     let (_common_path, common_id) = ctx.run("common", "common").unwrap();
     let files_mod_path = ctx.out_dir.join("files").join("mod.rs");
     let (_fdb_path, fdb_id) = ctx.run("files", "fdb").unwrap();

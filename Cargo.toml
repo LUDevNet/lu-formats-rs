@@ -16,12 +16,8 @@ serde_json = { version = "1.0.103", optional = true }
 
 [build-dependencies]
 serde_yaml = "0.9.16"
-kaitai-struct-types = { path = "./kaitai-struct-types" }
-kaitai-codegen-quote = { path = "./kaitai-codegen-quote" }
+abbau-codegen-quote = { git = "https://github.com/LUDevNet/abbau", rev = "1f61440" }
 quote = "1.0.23"
-
-[workspace]
-members = [".", "kaitai-struct-types", "kaitai-codegen-quote", "kaitai-expr"]
 
 [[bin]]
 name = "lump"
