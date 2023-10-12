@@ -1,5 +1,5 @@
 [package]
-name = "lu-formats-rs"
+name = "lu-formats"
 version = "0.1.0"
 edition = "2021"
 

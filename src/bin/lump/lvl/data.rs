@@ -1,4 +1,4 @@
-use lu_formats_rs::files::lvl::{EditorSettings, LightingInfo, ObjectInfo, Particle, SkydomeInfo};
+use lu_formats::files::lvl::{EditorSettings, LightingInfo, ObjectInfo, Particle, SkydomeInfo};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

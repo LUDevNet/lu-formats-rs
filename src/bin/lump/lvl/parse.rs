@@ -1,5 +1,5 @@
 use super::data::{Environment, Level};
-use lu_formats_rs::files::lvl::{
+use lu_formats::files::lvl::{
     parse_chunk, parse_editor_settings, parse_environment_data, parse_fib_data,
     parse_lighting_info, parse_lvl, parse_object_data, parse_particle_data, parse_skydome_info,
     ChunkType, FibData, ObjectInfo, Particle,

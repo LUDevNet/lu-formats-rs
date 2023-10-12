@@ -1,4 +1,4 @@
-use lu_formats_rs::files::luz::parse_luz;
+use lu_formats::files::luz::parse_luz;
 use nom::Finish;
 
 pub fn dump_luz(path: &str) {
